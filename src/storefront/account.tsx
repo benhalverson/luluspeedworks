@@ -15,6 +15,7 @@ import {
   signupFields,
 } from "./auth";
 import { useCart } from "./cart";
+import { AddPasskey } from "./passkey";
 import { ProfilePanel } from "./profile";
 
 /** Credentials stay in React Hook Form, outside the A2UI/model data tree. */
@@ -212,7 +213,10 @@ export function AccountPanel() {
       !session.isPending &&
       !session.error &&
       location.pathname === "/profile" ? (
-        <ProfilePanel key={user.id} userId={user.id} />
+        <div key={user.id}>
+          <AddPasskey />
+          <ProfilePanel userId={user.id} />
+        </div>
       ) : null}
       {message ? (
         <p role="alert" className="mt-3">

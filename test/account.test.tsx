@@ -215,9 +215,11 @@ it("opens the existing account's profile and removes its fields on expiry", asyn
   );
   const view = renderWithClient(<AccountPanel />);
   await screen.findByDisplayValue("Ben");
+  expect(screen.getByRole("button", { name: "Add a passkey" })).toBeVisible();
   session.data = null;
   view.rerender(<AccountPanel />);
   expect(screen.queryByLabelText("First name")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add a passkey" })).toBeNull();
   expect(
     screen.getByRole("link", { name: "Sign in or create an account" }),
   ).toHaveAttribute("href", "/signin?returnTo=%2Fprofile");
