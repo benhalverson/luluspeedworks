@@ -129,6 +129,14 @@ export function createCatalogController(
 
   return {
     surface: processor.model.getSurface(surfaceId),
+    publishCart(value: import("./cart-view").CartView) {
+      processor.processMessages([
+        {
+          version: wireVersion,
+          updateDataModel: { surfaceId, path: "/cart", value },
+        },
+      ]);
+    },
     publishDetail(value: import("./product").DetailView) {
       processor.processMessages([
         {

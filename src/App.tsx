@@ -2,6 +2,8 @@ import { A2uiSurface } from "@a2ui/react/v0_9";
 import type { A2uiClientAction } from "@a2ui/web_core/v0_9";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Route, Routes, useLocation, useParams } from "react-router";
+import { cartActionSchema, useCart } from "./storefront/cart";
+import { cartView } from "./storefront/cart-view";
 import {
   type Category,
   createCatalogController,
@@ -12,6 +14,7 @@ import {
   detailView,
   emptyConfiguration,
   parseProductId,
+  quantityValid,
   useProduct,
 } from "./storefront/product";
 import { useCatalog } from "./storefront/queries";
@@ -35,6 +38,7 @@ function Storefront() {
   const id = pathname === "/" ? null : parseProductId(productId);
   const previousPath = useRef(pathname);
   const selected = useProduct(origin, id);
+  const bag = useCart(origin);
   const [configurations, setConfigurations] = useState<
     Record<number, Configuration>
   >({});
@@ -62,9 +66,50 @@ function Storefront() {
   const [page, setPage] = useState(1);
   const [controller, setController] =
     useState<ReturnType<typeof createCatalogController>>();
+  const availableColor = verifiedColors?.data.find(
+    (color) => color.publicId === config.color,
+  );
+  const bagView = cartView(
+    bag,
+    Boolean(
+      selected.product.isSuccess &&
+        !selected.product.isFetching &&
+        availableColor &&
+        quantityValid(config.quantity),
+    ),
+  );
   const onAction = useEffectEvent(
     (name: string, context: A2uiClientAction["context"]) => {
-      if (name === "configure") {
+      if (name === "refresh-bag") {
+        bag.mutation.reset();
+        void bag.cart.refetch();
+      } else if (name === "acknowledge-bag" && !bagView.busy) {
+        bag.mutation.mutate({ kind: "acknowledge" });
+      } else if (name === "change-bag" && !bagView.busy && !bag.uncertain) {
+        const action = cartActionSchema.safeParse(context);
+        if (action.success && action.data.kind !== "add")
+          bag.mutation.mutate(action.data);
+      } else if (name === "add-to-bag") {
+        const action = configureActionSchema.safeParse(context);
+        if (
+          action.success &&
+          action.data.productId === id &&
+          !bagView.addDisabled &&
+          availableColor &&
+          selected.product.data
+        ) {
+          bag.mutation.mutate({
+            kind: "add",
+            item: {
+              skuNumber: selected.product.data.skuNumber,
+              quantity: Number(config.quantity),
+              color: availableColor.color,
+              filamentType: selected.product.data.filamentType,
+              filamentId: availableColor.publicId,
+            },
+          });
+        }
+      } else if (name === "configure") {
         const result = configureActionSchema.safeParse(context);
         if (
           !result.success ||
@@ -114,6 +159,9 @@ function Storefront() {
     controller?.publish(snapshot, category, page, status, failed);
   }, [controller, snapshot, category, page, status, failed]);
   const detail = detailView(id, selected, config);
+  useEffect(() => {
+    controller?.publishCart(bagView);
+  }, [controller, bagView]);
   useEffect(() => {
     controller?.publishDetail(detail);
   }, [controller, detail]);

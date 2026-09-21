@@ -37,7 +37,6 @@ describe("Pit Bench", () => {
     for (const name of [
       "Add to bag",
       "Send shopping request",
-      "Shopping bag, 0 items",
       "Previous",
       "Next",
     ])
