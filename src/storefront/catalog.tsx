@@ -5,9 +5,11 @@ import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 
-// A2UI supplies string IDs for static children and { id, basePath } for
-// repeated entries. Convert both to buildChild(id, basePath) arguments,
-// preserving the data path that binds each entry to its own product.
+/**
+ * Converts A2UI child references to arguments for `buildChild(id, basePath)`.
+ * Static children use string IDs; repeated entries include a `basePath`
+ * that must be preserved to bind each entry to its own product.
+ */
 function childReference(
   child: string | { id: string; basePath: string },
 ): [string, string?] {
