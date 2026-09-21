@@ -1,26 +1,39 @@
 import { A2uiSurface } from "@a2ui/react/v0_9";
 import type { A2uiClientAction } from "@a2ui/web_core/v0_9";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { Route, Routes, useLocation, useParams } from "react-router";
 import {
   type Category,
   createCatalogController,
 } from "./storefront/controller";
-import { useProductNavigation } from "./storefront/navigation";
 import {
   type Configuration,
   configureActionSchema,
   detailView,
   emptyConfiguration,
-  productRoute,
+  parseProductId,
   useProduct,
 } from "./storefront/product";
 import { useCatalog } from "./storefront/queries";
 
 export function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Storefront />} />
+      <Route path="/products/:productId" element={<Storefront />} />
+      <Route path="*" element={<Storefront />} />
+    </Routes>
+  );
+}
+
+function Storefront() {
   const origin =
     import.meta.env.VITE_API_ORIGIN || "https://api.benhalverson.dev";
   const { snapshot, status, failed, retry } = useCatalog(origin);
-  const id = productRoute(useProductNavigation());
+  const { pathname } = useLocation();
+  const { productId } = useParams();
+  const id = pathname === "/" ? null : parseProductId(productId);
+  const previousPath = useRef(pathname);
   const selected = useProduct(origin, id);
   const [configurations, setConfigurations] = useState<
     Record<number, Configuration>
@@ -104,6 +117,12 @@ export function App() {
   useEffect(() => {
     controller?.publishDetail(detail);
   }, [controller, detail]);
+  useEffect(() => {
+    if (previousPath.current !== pathname) {
+      document.getElementById("focus-title")?.focus();
+      previousPath.current = pathname;
+    }
+  }, [pathname]);
   return controller?.surface ? (
     <A2uiSurface surface={controller.surface} />
   ) : null;

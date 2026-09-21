@@ -4,6 +4,10 @@ import { catalogProductSchema, imageUrl, request } from "./api";
 import { catalogQueryDefaults } from "./queries";
 
 export const productIdSchema = z.number().int().positive().safe();
+export type ProductSelection =
+  | z.infer<typeof productIdSchema>
+  | null
+  | "invalid";
 export const selectedProductSchema = catalogProductSchema
   .omit({ currency: true, categoryIds: true, image: true })
   .extend({
@@ -92,7 +96,7 @@ const prices = new Intl.NumberFormat("en-US", {
 });
 
 export function detailView(
-  id: ReturnType<typeof productRoute>,
+  id: ProductSelection,
   queries: ReturnType<typeof useProduct>,
   config: Configuration,
 ): DetailView {
@@ -158,10 +162,13 @@ export function quantityValid(value: string) {
   return /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 69;
 }
 
-export function productRoute(path: string): number | null | "invalid" {
-  if (path === "/") return null;
-  const match = /^\/products\/([1-9]\d*)\/?$/.exec(path);
-  const parsed = productIdSchema.safeParse(Number(match?.[1]));
+export function parseProductId(value: string | undefined): number | "invalid" {
+  const parsed = z
+    .string()
+    .regex(/^[1-9]\d*$/)
+    .transform(Number)
+    .pipe(productIdSchema)
+    .safeParse(value);
   return parsed.success ? parsed.data : "invalid";
 }
 
@@ -174,7 +181,7 @@ export function productFailure(error: Error | null, subject: string) {
   return `${subject} unavailable. Check your connection and retry.`;
 }
 
-export function useProduct(origin: string, id: number | null | "invalid") {
+export function useProduct(origin: string, id: ProductSelection) {
   const product = useQuery({
     ...catalogQueryDefaults,
     queryKey: ["selected-product", origin, id],

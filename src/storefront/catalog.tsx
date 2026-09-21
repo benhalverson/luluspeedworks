@@ -1,6 +1,7 @@
 import { createComponentImplementation } from "@a2ui/react/v0_9";
 import { Catalog, CommonSchemas, componentId } from "@a2ui/web_core/v0_9";
 import { useState } from "react";
+import { Link } from "react-router";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -68,9 +69,9 @@ const BrandHeader = createComponentImplementation(
   { name: "BrandHeader", schema: z.object({}) },
   () => (
     <header className="flex min-h-22 items-center gap-3 border-b border-border tablet:min-h-26 tablet:gap-4.5 wide:gap-8">
-      <a
+      <Link
         className="flex shrink-0 items-center gap-3"
-        href="/"
+        to="/"
         aria-label="Lulu Speedworks home"
       >
         <span className="relative h-13 w-11 overflow-hidden rounded-full bg-white tablet:h-18.5 tablet:w-16">
@@ -88,7 +89,7 @@ const BrandHeader = createComponentImplementation(
             SPEEDWORKS
           </span>
         </span>
-      </a>
+      </Link>
       <Button
         className="ml-auto"
         variant="outline"
@@ -236,12 +237,12 @@ const ProductEntry = createComponentImplementation(
     <li className="min-w-0 border-b border-border pb-4 [overflow-wrap:anywhere]">
       <ProductImage key={props.image} src={props.image} name={props.name} />
       <h3 className="mt-2 font-medium">
-        <a
-          href={props.href}
+        <Link
+          to={props.href}
           className="rounded underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
         >
           {props.name}
-        </a>
+        </Link>
       </h3>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
         {props.description}
@@ -307,12 +308,12 @@ const ProductFocus = createComponentImplementation(
           {props.retryVisible ? (
             <Button onClick={props.retry}>Retry product</Button>
           ) : null}
-          <a
+          <Link
             className="mt-4 block underline focus-visible:outline-2 focus-visible:outline-ring"
-            href="/"
+            to="/"
           >
             Back to Shop all
-          </a>
+          </Link>
         </div>
       ) : (
         <>

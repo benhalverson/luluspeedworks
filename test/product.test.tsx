@@ -4,8 +4,8 @@ import { StrictMode } from "react";
 import { expect, it, vi } from "vitest";
 import { App } from "../src/App";
 import {
+  parseProductId,
   productFailure,
-  productRoute,
   quantityValid,
 } from "../src/storefront/product";
 import { apiPage, categories, product } from "./catalog-fixtures";
@@ -188,12 +188,36 @@ it("uses native links, remembers each product, revalidates entry, and resets on 
   );
 });
 
+it("keeps product configuration through React Router home links and restores route focus", async () => {
+  window.history.replaceState(null, "", "/products/1?shared=true#details");
+  respond();
+  render(<App />);
+  await ready();
+  fireEvent.change(screen.getByLabelText("Quantity"), {
+    target: { value: "7" },
+  });
+  fireEvent.change(screen.getByLabelText("Color"), {
+    target: { value: otherRed.publicId },
+  });
+  fireEvent.click(screen.getByRole("link", { name: "Lulu Speedworks home" }));
+  expect(window.location.pathname).toBe("/");
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Your bench awaits.",
+  );
+  fireEvent.click(await screen.findByRole("link", { name: "Part 1" }));
+  await ready();
+  expect(screen.getByLabelText("Quantity")).toHaveValue(7);
+  expect(screen.getByLabelText("Color")).toHaveValue(otherRed.publicId);
+  expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+});
+
 it.each([
   "/products/SKU-101",
   "/products/0",
   "/products/-1",
   "/products/1.5",
   "/products/1junk",
+  "/products/1/extra",
   "/products/9007199254740992",
   "/unknown",
 ])(
@@ -421,8 +445,8 @@ it("handles absent images and compatibility without invented claims", async () =
 });
 
 it("validates route and quantity boundaries and error fallback", () => {
-  expect(productRoute("/")).toBeNull();
-  expect(productRoute("/products/42")).toBe(42);
+  expect(parseProductId(undefined)).toBe("invalid");
+  expect(parseProductId("42")).toBe(42);
   expect(quantityValid("abc")).toBe(false);
   expect(productFailure(null, "Product")).toContain("unavailable");
 });
