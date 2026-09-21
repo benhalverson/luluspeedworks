@@ -9,7 +9,7 @@ and its published `/open-api` document, plus `/categories`,
 - Explicit product pagination returns `{ products, pagination }`. Pagination
   contains `page`, `limit`, `totalItems`, `totalPages`, `hasNextPage`, and
   `hasPreviousPage`. Observed values: `1, 100, 1, 1, false, false`.
-  Omitting pagination returns an array (prior planning verification).
+  Omitting pagination was also verified to return an array with one product.
 - Products contain numeric `id` and `price`, string `name`, `description`,
   and `image`. Online price is USD dollars: observed `2.29` is displayed as
   `$2.29` with no unit conversion. Unrelated commerce fields are discarded.
