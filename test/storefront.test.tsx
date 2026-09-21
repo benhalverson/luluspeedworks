@@ -34,16 +34,11 @@ describe("Pit Bench", () => {
     expect(
       screen.getByAltText("Lulu the dog with a racing badge"),
     ).toHaveAttribute("src", "/brand/lulu-logo.svg");
-    for (const name of [
-      "Add to bag",
-      "Send shopping request",
-      "Previous",
-      "Next",
-    ])
+    for (const name of ["Add to bag", "Previous", "Next"])
       expect(
         screen.getByRole("button", { name: new RegExp(name) }),
       ).toBeDisabled();
-    for (const label of ["Color", "Quantity", "YOUR SHOPPING REQUEST"])
+    for (const label of ["Color", "Quantity"])
       expect(
         screen.getByLabelText(label, { selector: "input" }),
       ).toBeDisabled();

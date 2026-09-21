@@ -36,6 +36,8 @@
   "dependencies": {
     "@a2ui/react": "0.11.1",
     "@a2ui/web_core": "0.11.0",
+    "@ag-ui/client": "1.0.0",
+    "@ag-ui/core": "1.0.0",
     "@better-auth/core": "1.6.33",
     "@better-auth/passkey": "1.6.33",
     "@better-auth/utils": "0.4.2",

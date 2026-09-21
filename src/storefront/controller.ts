@@ -1,8 +1,10 @@
 import {
   type A2uiClientAction,
   type A2uiMessage,
+  batchWrite,
   MessageProcessor,
 } from "@a2ui/web_core/v0_9";
+import { type AgentComposition, compositionSchema } from "./agent-contract";
 import type { CatalogSnapshot } from "./api";
 import { componentCatalog } from "./catalog";
 import {
@@ -60,6 +62,39 @@ export function createCatalogController(
     { version: wireVersion },
   );
   processor.processMessages(structuredClone(initialMessages));
+  const surface = processor.model.getSurface(surfaceId);
+  if (!surface) {
+    processor.model.dispose();
+    throw new Error("The storefront surface could not be initialized.");
+  }
+  const componentsModel = surface.componentsModel;
+  let guidance = false;
+  function restoreGuidance() {
+    if (!guidance) return;
+    batchWrite(() => {
+      processor.processMessages(
+        initialMessages.flatMap((message) =>
+          "updateComponents" in message
+            ? [
+                {
+                  ...message,
+                  updateComponents: {
+                    surfaceId,
+                    components: message.updateComponents.components.filter(
+                      (node) => node.id === "products" || node.id === "focus",
+                    ),
+                  },
+                },
+              ]
+            : [],
+        ),
+      );
+      for (const [id] of componentsModel.entries) {
+        if (id.startsWith("agent-")) componentsModel.removeComponent(id);
+      }
+    });
+    guidance = false;
+  }
 
   function update(
     value: Record<
@@ -128,7 +163,43 @@ export function createCatalogController(
   }
 
   return {
-    surface: processor.model.getSurface(surfaceId),
+    surface,
+    restoreGuidance,
+    publishGuidance(raw: AgentComposition) {
+      const composition = compositionSchema.parse(raw);
+      batchWrite(() => {
+        restoreGuidance();
+        processor.processMessages(
+          composition.messages.map((message) => ({
+            ...message,
+            updateComponents: {
+              ...message.updateComponents,
+              components: message.updateComponents.components.map((node) =>
+                node.component === "ProductRail"
+                  ? {
+                      ...node,
+                      controls: ["category-all", "category-rc", "category-pit"],
+                    }
+                  : node,
+              ),
+            },
+          })),
+        );
+      });
+      guidance = true;
+    },
+    publishAgent(status: string, busy: boolean) {
+      processor.processMessages([
+        {
+          version: wireVersion,
+          updateDataModel: {
+            surfaceId,
+            path: "/agent",
+            value: { status, busy },
+          },
+        },
+      ]);
+    },
     publishCart(value: import("./cart-view").CartView) {
       processor.processMessages([
         {
