@@ -38,6 +38,12 @@ export function imageUrl(value: string | null | undefined): string {
     ? value
     : "";
 }
+/**
+ * Fetches and validates a catalog response for TanStack Query's query functions.
+ * Omits credentials, rejects unsuccessful HTTP responses, parses the body with
+ * Zod, and combines TanStack's cancellation signal with a ten-second timeout.
+ * TanStack Query owns loading state, errors, caching, and retry behavior.
+ */
 export async function request<T>(
   origin: string,
   path: string,
