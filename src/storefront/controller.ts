@@ -22,13 +22,13 @@ export function browse(
   const pit = snapshot.categories.filter((item) =>
     ["pit tools", "pit stuff"].includes(item.categoryName.trim().toLowerCase()),
   );
-  const mappings =
-    category === "all" ? [rc, pit] : [category === "rc" ? rc : pit];
+  const mappings = category === "all" ? [] : [category === "rc" ? rc : pit];
   const available = mappings.every((mapping) => mapping.length === 1);
   const ids = new Set(mappings.flat().map((item) => item.categoryId));
   const products = available
-    ? snapshot.products.filter((product) =>
-        product.categoryIds.some((id) => ids.has(id)),
+    ? snapshot.products.filter(
+        (product) =>
+          category === "all" || product.categoryIds.some((id) => ids.has(id)),
       )
     : [];
   const totalPages = Math.max(1, Math.ceil(products.length / 10));

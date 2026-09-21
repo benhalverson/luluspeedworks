@@ -75,7 +75,11 @@ it("distinguishes unavailable mappings from an empty category and permits retry"
     .mockResolvedValueOnce(Response.json(apiPage([1])))
     .mockResolvedValueOnce(Response.json({ id: 1, categories: [] }));
   render(<App />);
-  await screen.findByText(/Shop all unavailable/);
+  await screen.findByText("Part 1");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Shop all: 1 products. Page 1 of 1.",
+  );
+  expect(screen.getByText("$2.29")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Pit Tools" }));
   expect(screen.getByRole("status")).toHaveTextContent(
     "No products in Pit Tools.",
