@@ -38,6 +38,10 @@ export const initialMessages: A2uiMessage[] = [
         description: "No product selected. There’s room for your next project.",
         rail: loadingRail,
         detail: emptyDetail,
+        agent: {
+          busy: false,
+          status: "Ask about catalog items. Use the direct controls any time.",
+        },
         cart: {
           lines: [],
           status: "Loading bag…",
@@ -139,7 +143,12 @@ export const initialMessages: A2uiMessage[] = [
           retryVisible: { path: "/detail/colorsRetry" },
           retry: { event: { name: "retry-colors" } },
         },
-        { id: "composer", component: "ShoppingComposer" },
+        {
+          id: "composer",
+          component: "ShoppingComposer",
+          busy: { path: "/agent/busy" },
+          status: { path: "/agent/status" },
+        },
         {
           id: "bag",
           component: "CartPanel",
