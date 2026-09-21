@@ -99,6 +99,7 @@ it("reuses the five-minute cache, disables automatic refetch, and isolates every
     client
       .getQueryCache()
       .getAll()
+      .filter((query) => query.queryKey[0] === "catalog")
       .every((query) => query.gcTime === 300_000),
   ).toBe(true);
   first.unmount();
@@ -115,7 +116,9 @@ it("reuses the five-minute cache, disables automatic refetch, and isolates every
   second.rerender(<App />);
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(6));
   await screen.findByText("Part 1");
-  expect(client.getQueryCache().getAll()).toHaveLength(6);
+  expect(
+    client.getQueryCache().findAll({ queryKey: ["catalog"] }),
+  ).toHaveLength(6);
   expect(
     fetcher.mock.calls
       .slice(3)

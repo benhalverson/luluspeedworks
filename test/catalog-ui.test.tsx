@@ -6,6 +6,26 @@ import { App } from "../src/App";
 import { apiPage, categories, mockCatalog, product } from "./catalog-fixtures";
 import { renderWithClient as render } from "./query-client";
 
+it.each([
+  { membership: [] },
+  { membership: [...categories, { categoryId: 3, categoryName: "RC Parts" }] },
+])(
+  "Shop all renders every product with missing or ambiguous named mappings",
+  async ({ membership }) => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/categories") return Response.json(membership);
+      if (path === "/products") return Response.json(apiPage([1]));
+      return Response.json({ id: 1, categories: [] });
+    });
+    render(<App />);
+    await screen.findByRole("link", { name: "Part 1" });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Shop all: 1 products.",
+    );
+  },
+);
+
 it("renders entries through the official bindings, pages and resets category pagination", async () => {
   mockCatalog(21);
   const process = vi.spyOn(MessageProcessor.prototype, "processMessages");
@@ -75,7 +95,11 @@ it("distinguishes unavailable mappings from an empty category and permits retry"
     .mockResolvedValueOnce(Response.json(apiPage([1])))
     .mockResolvedValueOnce(Response.json({ id: 1, categories: [] }));
   render(<App />);
-  await screen.findByText(/Shop all unavailable/);
+  await screen.findByText("Part 1");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Shop all: 1 products. Page 1 of 1.",
+  );
+  expect(screen.getByText("$2.29")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Pit Tools" }));
   expect(screen.getByRole("status")).toHaveTextContent(
     "No products in Pit Tools.",

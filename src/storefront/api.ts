@@ -60,7 +60,7 @@ export async function request<T>(
       credentials: "omit",
       signal: AbortSignal.any([signal, timeout.signal]),
     });
-    if (!response.ok) throw new Error("Catalog unavailable. Please retry.");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return schema.parse(await response.json());
   } catch (error) {
     if (timeout.signal.aborted) throw timeout.signal.reason;

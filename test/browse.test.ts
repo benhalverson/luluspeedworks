@@ -39,10 +39,10 @@ it("supports the future Pit Tools name and excludes uncategorized products", () 
     ),
   ).toMatchObject({ available: true, count: 21 });
 });
-it("requires unique mappings, including both for Shop all", () => {
+it("requires unique mappings only for category filters", () => {
   const missing = { ...snapshot, categories: categories.slice(1) };
   expect(browse(missing, "rc", 1).available).toBe(false);
-  expect(browse(missing, "all", 1).available).toBe(false);
+  expect(browse(missing, "all", 1).available).toBe(true);
   expect(browse(missing, "pit", 1).available).toBe(true);
   expect(
     browse(
@@ -70,4 +70,20 @@ it("requires unique mappings, including both for Shop all", () => {
       1,
     ).available,
   ).toBe(false);
+});
+
+it("shows uncategorized products in Shop all without required categories", () => {
+  const products = [
+    { ...product(1), currency: "USD" as const, categoryIds: [] },
+  ];
+  for (const categories of [
+    [],
+    [{ categoryId: 1, categoryName: "Pit Stuff" }],
+  ]) {
+    expect(browse({ categories, products }, "all", 1)).toMatchObject({
+      available: true,
+      entries: products,
+      count: 1,
+    });
+  }
 });

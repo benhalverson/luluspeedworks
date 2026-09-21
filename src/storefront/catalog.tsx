@@ -1,6 +1,7 @@
 import { createComponentImplementation } from "@a2ui/react/v0_9";
 import { Catalog, CommonSchemas, componentId } from "@a2ui/web_core/v0_9";
 import { useState } from "react";
+import { Link } from "react-router";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -68,9 +69,9 @@ const BrandHeader = createComponentImplementation(
   { name: "BrandHeader", schema: z.object({}) },
   () => (
     <header className="flex min-h-22 items-center gap-3 border-b border-border tablet:min-h-26 tablet:gap-4.5 wide:gap-8">
-      <a
+      <Link
         className="flex shrink-0 items-center gap-3"
-        href="/"
+        to="/"
         aria-label="Lulu Speedworks home"
       >
         <span className="relative h-13 w-11 overflow-hidden rounded-full bg-white tablet:h-18.5 tablet:w-16">
@@ -88,7 +89,7 @@ const BrandHeader = createComponentImplementation(
             SPEEDWORKS
           </span>
         </span>
-      </a>
+      </Link>
       <Button
         className="ml-auto"
         variant="outline"
@@ -229,12 +230,20 @@ const ProductEntry = createComponentImplementation(
       description: CommonSchemas.DynamicString,
       image: CommonSchemas.DynamicString,
       price: CommonSchemas.DynamicString,
+      href: CommonSchemas.DynamicString,
     }),
   },
   ({ props }) => (
     <li className="min-w-0 border-b border-border pb-4 [overflow-wrap:anywhere]">
       <ProductImage key={props.image} src={props.image} name={props.name} />
-      <h3 className="mt-2 font-medium">{props.name}</h3>
+      <h3 className="mt-2 font-medium">
+        <Link
+          to={props.href}
+          className="rounded underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          {props.name}
+        </Link>
+      </h3>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
         {props.description}
       </p>
@@ -249,57 +258,120 @@ const ProductFocus = createComponentImplementation(
     schema: z.object({
       title: CommonSchemas.DynamicString,
       description: CommonSchemas.DynamicString,
+      selectedTitle: CommonSchemas.DynamicString,
+      selectedDescription: CommonSchemas.DynamicString,
+      active: CommonSchemas.DynamicBoolean,
+      ready: CommonSchemas.DynamicBoolean,
+      price: CommonSchemas.DynamicString,
+      sku: CommonSchemas.DynamicString,
+      compatibility: CommonSchemas.DynamicString,
+      images: CommonSchemas.ChildList,
+      retryVisible: CommonSchemas.DynamicBoolean,
+      retry: CommonSchemas.Action,
     }),
   },
-  ({ props }) => (
-    <section aria-labelledby="focus-title">
+  ({ props, buildChild }) => (
+    <section aria-labelledby="focus-title" className="[overflow-wrap:anywhere]">
       <p className="text-[10px] font-semibold leading-normal tracking-[0.14em] text-muted-foreground">
         YOUR NEXT RACE-DAY PROJECT
       </p>
       <h1
         id="focus-title"
+        tabIndex={-1}
         className="mt-2.25 mb-6 font-display text-[clamp(38px,4vw,56px)] font-semibold leading-[1.1]"
       >
-        {props.title}
+        {props.active ? props.selectedTitle : props.title}
       </h1>
-      <div className="relative flex min-h-65 flex-col items-center justify-center gap-4.5 rounded-[5px] border border-border bg-muted px-6.25 py-10 text-center tablet:min-h-77.5">
-        <span
-          className="absolute top-2.5 left-4.5 text-[20px] text-marker"
-          aria-hidden="true"
-        >
-          +
-        </span>
-        <span
-          className="-skew-x-7 font-display text-[64px] font-bold leading-none text-watermark"
-          aria-hidden="true"
-        >
-          LS
-        </span>
-        <div>
-          <h2 className="font-display text-[26px] font-semibold">
-            The bench is clear.
-          </h2>
-          <p className="mt-2 max-w-67.5 text-[13px] leading-[1.6] text-muted-foreground">
-            {props.description}
-          </p>
+      {props.active ? (
+        <div aria-live="polite">
+          {props.ready ? (
+            <>
+              {props.images.length ? (
+                props.images.map((child) =>
+                  buildChild(...childReference(child)),
+                )
+              ) : (
+                <ProductImage src="" name="" />
+              )}
+              <p className="my-4 text-xl text-primary">{props.price}</p>
+              <p className="my-3 whitespace-pre-wrap">
+                {props.selectedDescription}
+              </p>
+              <p className="text-sm text-muted-foreground">SKU: {props.sku}</p>
+              {props.compatibility ? (
+                <p className="my-3 whitespace-pre-wrap">
+                  {props.compatibility}
+                </p>
+              ) : null}
+            </>
+          ) : null}
+          {props.retryVisible ? (
+            <Button onClick={props.retry}>Retry product</Button>
+          ) : null}
+          <Link
+            className="mt-4 block underline focus-visible:outline-2 focus-visible:outline-ring"
+            to="/"
+          >
+            Back to Shop all
+          </Link>
         </div>
-        <span
-          className="absolute right-4.5 bottom-2.5 text-[20px] text-marker"
-          aria-hidden="true"
-        >
-          +
-        </span>
-      </div>
-      <p className="mt-4 text-[12px] leading-[1.6] text-muted-foreground">
-        Product details and compatibility will appear with your selection.
-      </p>
+      ) : (
+        <>
+          <div className="relative flex min-h-65 flex-col items-center justify-center gap-4.5 rounded-[5px] border border-border bg-muted px-6.25 py-10 text-center tablet:min-h-77.5">
+            <span
+              className="absolute top-2.5 left-4.5 text-[20px] text-marker"
+              aria-hidden="true"
+            >
+              +
+            </span>
+            <span
+              className="-skew-x-7 font-display text-[64px] font-bold leading-none text-watermark"
+              aria-hidden="true"
+            >
+              LS
+            </span>
+            <div>
+              <h2 className="font-display text-[26px] font-semibold">
+                The bench is clear.
+              </h2>
+              <p className="mt-2 max-w-67.5 text-[13px] leading-[1.6] text-muted-foreground">
+                {props.description}
+              </p>
+            </div>
+            <span
+              className="absolute right-4.5 bottom-2.5 text-[20px] text-marker"
+              aria-hidden="true"
+            >
+              +
+            </span>
+          </div>
+          <p className="mt-4 text-[12px] leading-[1.6] text-muted-foreground">
+            Product details and compatibility will appear with your selection.
+          </p>
+        </>
+      )}
     </section>
   ),
 );
 
 const Configuration = createComponentImplementation(
-  { name: "Configuration", schema: z.object({}) },
-  () => (
+  {
+    name: "Configuration",
+    schema: z.object({
+      productId: CommonSchemas.DynamicNumber,
+      material: CommonSchemas.DynamicString,
+      ready: CommonSchemas.DynamicBoolean,
+      colorsReady: CommonSchemas.DynamicBoolean,
+      colors: CommonSchemas.ChildList,
+      color: CommonSchemas.DynamicString,
+      quantity: CommonSchemas.DynamicString,
+      quantityError: CommonSchemas.DynamicString,
+      colorStatus: CommonSchemas.DynamicString,
+      retryVisible: CommonSchemas.DynamicBoolean,
+      retry: CommonSchemas.Action,
+    }),
+  },
+  ({ props, buildChild, context }) => (
     <section
       className="w-full self-start rounded-[7px] border border-border bg-card p-5.5 tablet:p-4.5 wide:p-6"
       aria-labelledby="configuration-title"
@@ -311,20 +383,46 @@ const Configuration = createComponentImplementation(
         MAKE IT YOURS
       </h2>
       <p className="mt-4.5 mb-2.5 font-display text-[28px] leading-[1.2]">
-        No part selected
+        {props.ready ? `Material: ${props.material}` : "No part selected"}
       </p>
       <p className="text-[13px] leading-[1.6] text-muted-foreground">
-        Select a product when the catalog is available to see its options.
+        <span aria-live="polite">{props.colorStatus}</span>
       </p>
+      {props.retryVisible ? (
+        <Button onClick={props.retry}>Retry colors</Button>
+      ) : null}
       <label className="mt-6 mb-2.25 block text-[12px]" htmlFor="color">
         Color
       </label>
-      <Input
-        className="text-[12px]"
-        id="color"
-        placeholder="Choose a product first"
-        disabled
-      />
+      {props.ready ? (
+        <select
+          id="color"
+          className="w-full min-w-0 rounded border border-input bg-background p-2 text-xs focus-visible:outline-2 focus-visible:outline-ring"
+          value={props.color}
+          disabled={!props.colorsReady}
+          onChange={(event) =>
+            void context.dispatchAction({
+              event: {
+                name: "configure",
+                context: {
+                  productId: props.productId,
+                  color: event.target.value,
+                },
+              },
+            })
+          }
+        >
+          <option value="">Choose a color</option>
+          {props.colors.map((child) => buildChild(...childReference(child)))}
+        </select>
+      ) : (
+        <Input
+          className="text-[12px]"
+          id="color"
+          placeholder="Choose a product first"
+          disabled
+        />
+      )}
       <label className="mt-6 mb-2.25 block text-[12px]" htmlFor="quantity">
         Quantity
       </label>
@@ -332,9 +430,28 @@ const Configuration = createComponentImplementation(
         className="text-[12px]"
         id="quantity"
         type="number"
-        placeholder="—"
-        disabled
+        min={1}
+        max={69}
+        step={1}
+        value={props.quantity}
+        aria-invalid={Boolean(props.quantityError)}
+        aria-describedby="quantity-error"
+        onChange={(event) =>
+          void context.dispatchAction({
+            event: {
+              name: "configure",
+              context: {
+                productId: props.productId,
+                quantity: event.target.value,
+              },
+            },
+          })
+        }
+        disabled={!props.ready}
       />
+      <p id="quantity-error" aria-live="polite" className="mt-2 text-sm">
+        {props.quantityError}
+      </p>
       <Button className="mt-7 mb-2.5 w-full justify-between" disabled>
         Add to bag <span aria-hidden="true">↗</span>
       </Button>
@@ -342,6 +459,29 @@ const Configuration = createComponentImplementation(
         Shopping is not available yet.
       </p>
     </section>
+  ),
+);
+
+const ColorOption = createComponentImplementation(
+  {
+    name: "ColorOption",
+    schema: z.object({
+      value: CommonSchemas.DynamicString,
+      label: CommonSchemas.DynamicString,
+    }),
+  },
+  ({ props }) => <option value={props.value}>{props.label}</option>,
+);
+const DetailImage = createComponentImplementation(
+  {
+    name: "DetailImage",
+    schema: z.object({
+      src: CommonSchemas.DynamicString,
+      name: CommonSchemas.DynamicString,
+    }),
+  },
+  ({ props }) => (
+    <ProductImage key={props.src} src={props.src} name={props.name} />
   ),
 );
 
@@ -395,5 +535,7 @@ export const componentCatalog = new Catalog(
     ProductFocus,
     Configuration,
     ShoppingComposer,
+    ColorOption,
+    DetailImage,
   ],
 );

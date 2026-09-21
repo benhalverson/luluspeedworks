@@ -2,7 +2,9 @@
 
 This repository is frontend-only. Keep runtime code under `src/`. No Hono, API endpoints, custom Worker request handlers, commerce credentials, model calls, or health endpoint belong here. Future endpoint work uses a dedicated branch in `~/projects/3dprinter-web-api` and its existing health endpoint.
 
-Use a dedicated feature branch/worktree. Follow the selected B — Pit Bench design, with the specification's broader integration milestones kept separate from scaffold delivery. Do not promote prototype fixtures, variant switching, scripted shopping, or simulated payments.
+Use a dedicated feature branch in the main checkout. Do not create worktrees. Follow the selected B — Pit Bench design, with the specification's broader integration milestones kept separate from scaffold delivery. Do not promote prototype fixtures, variant switching, scripted shopping, or simulated payments.
+
+Do not create evidence documents or review-report files, including `docs/*evidence*` and `docs/*reviews*`, unless the user explicitly requests those files. Report validation results and review findings in the conversation instead.
 
 Use Node 24.18.0, pnpm 10.23.0, TypeScript 7, React, Vite, Tailwind and shadcn. Biome exclusively owns linting and formatting; keep its recommended React and accessibility rules enabled. Commit the resolved lockfile. Keep Zod 3.25.76 with the pinned A2UI renderer/core and wire version until compatibility is revalidated.
 
