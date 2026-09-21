@@ -1,8 +1,15 @@
 import { createComponentImplementation } from "@a2ui/react/v0_9";
 import { Catalog, CommonSchemas, componentId } from "@a2ui/web_core/v0_9";
+import { useState } from "react";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+
+function childReference(
+  child: string | { id: string; basePath: string },
+): [string, string?] {
+  return typeof child === "string" ? [child] : [child.id, child.basePath];
+}
 
 const PitBench = createComponentImplementation(
   {
@@ -77,20 +84,6 @@ const BrandHeader = createComponentImplementation(
           </span>
         </span>
       </a>
-      <nav
-        className="mr-auto hidden gap-1 tablet:flex wide:ml-6 wide:gap-2"
-        aria-label="Shop categories"
-      >
-        <Button className="px-2 wide:px-4" variant="outline" disabled>
-          Shop all
-        </Button>
-        <Button className="px-2 wide:px-4" variant="outline" disabled>
-          RC parts
-        </Button>
-        <Button className="px-2 wide:px-4" variant="outline" disabled>
-          Pit tools
-        </Button>
-      </nav>
       <Button
         className="ml-auto"
         variant="outline"
@@ -107,8 +100,22 @@ const BrandHeader = createComponentImplementation(
 );
 
 const ProductRail = createComponentImplementation(
-  { name: "ProductRail", schema: z.object({}) },
-  () => (
+  {
+    name: "ProductRail",
+    schema: z.object({
+      controls: z.array(componentId()),
+      entries: CommonSchemas.ChildList,
+      status: CommonSchemas.DynamicString,
+      paging: CommonSchemas.DynamicString,
+      previousDisabled: CommonSchemas.DynamicBoolean,
+      nextDisabled: CommonSchemas.DynamicBoolean,
+      retryVisible: CommonSchemas.DynamicBoolean,
+      previous: CommonSchemas.Action,
+      next: CommonSchemas.Action,
+      retry: CommonSchemas.Action,
+    }),
+  },
+  ({ props, buildChild }) => (
     <aside
       className="col-span-full border-b border-border pb-5 bench:col-span-1 bench:row-span-2 bench:border-r bench:border-b-0 bench:pr-6 bench:pb-0"
       aria-labelledby="products-title"
@@ -119,30 +126,115 @@ const ProductRail = createComponentImplementation(
       >
         THE PARTS DRAWER
       </h2>
-      <div className="flex justify-between border-b border-border py-3 text-[12px] text-muted-foreground bench:pt-5.5 bench:pb-4">
-        <span>All products</span>
-        <span>0</span>
-      </div>
-      <div className="pt-4 bench:py-8">
-        <span
-          className="hidden text-[32px] font-normal text-primary bench:inline"
-          aria-hidden="true"
+      <nav aria-label="Shop categories" className="flex flex-wrap gap-2 py-4">
+        {props.controls.map((child) => buildChild(...childReference(child)))}
+      </nav>
+      <p
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="py-3 text-[13px] leading-relaxed text-muted-foreground"
+      >
+        {props.status}
+      </p>
+      {props.retryVisible ? (
+        <Button variant="outline" onClick={props.retry}>
+          Retry
+        </Button>
+      ) : null}
+      <ul
+        aria-label="Catalog products"
+        className="grid gap-4 tablet:grid-cols-2 bench:grid-cols-1"
+      >
+        {props.entries.map((child) => buildChild(...childReference(child)))}
+      </ul>
+      <nav
+        className="mt-4 flex flex-wrap items-center gap-2"
+        aria-label="Catalog pagination"
+      >
+        <p className="w-full text-xs text-muted-foreground">{props.paging}</p>
+        <Button
+          className="px-2"
+          variant="outline"
+          disabled={props.previousDisabled}
+          onClick={props.previous}
         >
-          +
-        </span>
-        <h3 className="mb-2 text-[16px] font-medium bench:mt-3">
-          No products yet
-        </h3>
-        <p className="text-[13px] leading-[1.6] text-muted-foreground">
-          RC parts and pit tools will appear here when the catalog is available.
-        </p>
-      </div>
+          Previous
+        </Button>
+        <Button
+          className="px-2"
+          variant="outline"
+          disabled={props.nextDisabled}
+          onClick={props.next}
+        >
+          Next
+        </Button>
+      </nav>
       <p className="hidden pt-9.5 font-display text-[25px] leading-[1.1] text-caption bench:block">
         Small parts.
         <br />
         Big pit energy.
       </p>
     </aside>
+  ),
+);
+
+const CategoryControl = createComponentImplementation(
+  {
+    name: "CategoryControl",
+    schema: z.object({
+      label: z.string(),
+      selected: CommonSchemas.DynamicBoolean,
+      action: CommonSchemas.Action,
+    }),
+  },
+  ({ props }) => (
+    <Button
+      className="px-2 text-xs"
+      variant="outline"
+      aria-pressed={props.selected}
+      onClick={props.action}
+    >
+      {props.label}
+    </Button>
+  ),
+);
+
+function ProductImage({ src, name }: { src: string; name: string }) {
+  const [broken, setBroken] = useState(false);
+  return src && !broken ? (
+    <img
+      src={src}
+      alt={name}
+      onError={() => setBroken(true)}
+      className="aspect-[4/3] w-full rounded border border-border object-contain"
+    />
+  ) : (
+    <div className="flex aspect-[4/3] items-center justify-center rounded border border-border bg-muted text-xs text-muted-foreground">
+      Image unavailable
+    </div>
+  );
+}
+
+const ProductEntry = createComponentImplementation(
+  {
+    name: "ProductEntry",
+    schema: z.object({
+      name: CommonSchemas.DynamicString,
+      description: CommonSchemas.DynamicString,
+      image: CommonSchemas.DynamicString,
+      price: CommonSchemas.DynamicString,
+    }),
+  },
+  ({ props }) => (
+    <li className="min-w-0 border-b border-border pb-4 [overflow-wrap:anywhere]">
+      <ProductImage key={props.image} src={props.image} name={props.name} />
+      <h3 className="mt-2 font-medium">{props.name}</h3>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+        {props.description}
+      </p>
+      <p className="mt-2 text-sm text-primary">{props.price}</p>
+    </li>
   ),
 );
 
@@ -293,6 +385,8 @@ export const componentCatalog = new Catalog(
     PitBench,
     BrandHeader,
     ProductRail,
+    CategoryControl,
+    ProductEntry,
     ProductFocus,
     Configuration,
     ShoppingComposer,

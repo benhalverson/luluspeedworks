@@ -1,6 +1,6 @@
 # Lulu Speedworks
 
-Frontend-only React storefront for physical RC parts and pit tools. The selected **B — Pit Bench** layout renders an empty initial surface through the official A2UI renderer. Shopping controls and the integrated composer are disabled until their integrations exist.
+Frontend-only React storefront for physical RC parts and pit tools. The selected **B — Pit Bench** layout browses the live catalog through the official A2UI renderer. Product selection, configuration, bag and composer remain scaffolded.
 
 ## Clean-clone setup
 
@@ -15,7 +15,9 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Use Node **24.18.0** and pnpm **10.23.0**. Vite prints the local URL (normally `http://localhost:5173`). No environment variables, API server, Cloudflare login, prototype checkout, or external asset directory are needed.
+Use Node **24.18.0** and pnpm **10.23.0**. Development and `pnpm exec vite preview` use `http://localhost:3000`, an origin accepted by the live API. Ports are strict to prevent silently switching to an origin without CORS access.
+
+The public build-time `VITE_API_ORIGIN` defaults to `https://api.benhalverson.dev`. For a separately running development API, run `VITE_API_ORIGIN=http://localhost:8787 pnpm dev`; that API must allow the frontend origin. This value is public and must contain no secrets. Requests omit credentials; no proxy or backend is included. See [catalog contract and live dependencies](docs/catalog-contract.md).
 
 | Command | Purpose |
 | --- | --- |
@@ -32,11 +34,13 @@ Runtime TypeScript/TSX coverage includes unimported application files, the entry
 
 ## Rendering and design
 
-`src/storefront/catalog.tsx` declares six stable approved component implementations: PitBench, BrandHeader, ProductRail, ProductFocus, Configuration and ShoppingComposer. The root schema marks regional references with A2UI `componentId()`. Button and Input are minimal shadcn adaptations; `components.json` records the Tailwind/shadcn configuration.
+`src/storefront/catalog.tsx` declares stable approved component implementations, including ProductEntry and CategoryControl. The root schema marks regional references with A2UI `componentId()`. Button and Input are minimal shadcn adaptations; `components.json` records the Tailwind/shadcn configuration.
 
 Layout, typography, responsive variants and control overrides use Tailwind utilities. `src/styles.css` contains only shared theme tokens and base styles. Named `tablet`, `bench` and `wide` breakpoints preserve the selected design's region transitions.
 
-`src/storefront/messages.ts` defines typed `createSurface`, `updateDataModel` and `updateComponents` messages. The focused title and description bind to data-model paths. `App` creates a fresh processor in each effect setup, feeds those local messages into it and renders `A2uiSurface`. Cleanup disposes the surface group; the official renderer owns and cleans up its node resolver subscriptions. Strict Mode replay therefore receives a fresh model instead of reusing a disposed one. There is no bootstrap endpoint.
+`src/storefront/messages.ts` defines typed `createSurface`, `updateDataModel` and `updateComponents` messages. `controller.ts` owns the catalog snapshot, category and page, routing A2UI actions to data-model updates on one processor. Entries use a bound A2UI child template. `App` creates a controller in each effect setup and renders `A2uiSurface`. Cleanup aborts requests and disposes the surface group and action subscriptions; the renderer cleans up its node resolver. Strict Mode gets a fresh copy of initial messages. There is no bootstrap endpoint.
+
+The adapter validates Zod DTOs, reads all API pages and detail memberships before publishing, and never converts server USD prices. Categories filter locally, ten products per UI page. Requests time out after ten seconds with manual Retry. Missing or ambiguous category mappings are unavailable; Shop all requires both RC Parts and Pit Tools (Pit Stuff is an accepted alias). Network fixtures exist only in tests.
 
 Pinned protocol set: `@a2ui/react` **0.11.1**, `@a2ui/web_core` **0.11.0**, Zod **3.25.76**, wire **v0.9.1**. React/React DOM **19.3.0**, TypeScript **7.0.2** and matching Vitest/V8 **5.0.1** were verified against npm's stable tags on 2026-09-20.
 

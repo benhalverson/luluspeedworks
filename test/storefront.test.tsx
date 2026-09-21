@@ -24,7 +24,7 @@ describe("Pit Bench", () => {
     expect(
       screen.getByRole("complementary", { name: "THE PARTS DRAWER" }),
     ).toBeVisible();
-    expect(screen.getByText("No products yet")).toBeVisible();
+    expect(screen.getByText("Loading catalog…")).toBeVisible();
     expect(screen.getByRole("region", { name: "MAKE IT YOURS" })).toBeVisible();
     expect(screen.getByText("No part selected")).toBeVisible();
     expect(
@@ -33,8 +33,16 @@ describe("Pit Bench", () => {
     expect(
       screen.getByAltText("Lulu the dog with a racing badge"),
     ).toHaveAttribute("src", "/brand/lulu-logo.svg");
-    for (const button of screen.getAllByRole("button"))
-      expect(button).toBeDisabled();
+    for (const name of [
+      "Add to bag",
+      "Send shopping request",
+      "Shopping bag, 0 items",
+      "Previous",
+      "Next",
+    ])
+      expect(
+        screen.getByRole("button", { name: new RegExp(name) }),
+      ).toBeDisabled();
     for (const label of ["Color", "Quantity", "YOUR SHOPPING REQUEST"])
       expect(
         screen.getByLabelText(label, { selector: "input" }),
@@ -49,7 +57,7 @@ describe("Pit Bench", () => {
     const processor = new MessageProcessor([componentCatalog], undefined, {
       version: wireVersion,
     });
-    processor.processMessages(initialMessages);
+    processor.processMessages(structuredClone(initialMessages));
     const surface = processor.model.getSurface(surfaceId);
     if (!surface) throw new Error("Initial messages must create the surface");
     const view = render(<A2uiSurface surface={surface} />);
