@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: Barlow, sans-serif;
+  --font-display: "Barlow Condensed", sans-serif;
+  --color-background: #171e17;
+  --color-foreground: #f0f1e9;
+  --color-primary: #eab528;
+  --color-primary-foreground: #171e17;
+  --color-muted-foreground: #a2ac98;
+  --color-border: #394333;
+  --color-card: #1e271c;
+  --color-muted: #202a1e;
+  --color-subtle: #c6ccbe;
+  --color-caption: #8d9a81;
+  --color-watermark: #48563d;
+  --color-marker: #708064;
+  --color-input: #566048;
+  --breakpoint-tablet: 37.5625rem;
+  --breakpoint-bench: 53.1875rem;
+  --breakpoint-wide: 65.6875rem;
+}
+
+@layer base {
+  :root {
+    font-synthesis: none;
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground;
+  }
+
+  button,
+  input,
+  a {
+    @apply touch-manipulation;
+  }
+
+  a:focus-visible {
+    @apply outline-2 outline-offset-5 outline-primary;
+  }
+}
