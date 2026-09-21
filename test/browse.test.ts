@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { browse } from "../src/storefront/browse";
+import { browse } from "../src/storefront/controller";
 import { categories, product } from "./catalog-fixtures";
 
 const snapshot = {

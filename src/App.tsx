@@ -1,7 +1,9 @@
 import { A2uiSurface } from "@a2ui/react/v0_9";
 import { useEffect, useEffectEvent, useState } from "react";
-import type { Category } from "./storefront/browse";
-import { createCatalogController } from "./storefront/controller";
+import {
+  type Category,
+  createCatalogController,
+} from "./storefront/controller";
 import { useCatalog } from "./storefront/queries";
 
 export function App() {

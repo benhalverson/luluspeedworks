@@ -1,6 +1,11 @@
 import type { A2uiMessage } from "@a2ui/web_core/v0_9";
-import { categoryNames } from "./browse";
 import { componentCatalog } from "./catalog";
+
+export const categoryNames = {
+  all: "Shop all",
+  rc: "RC Parts",
+  pit: "Pit Tools",
+};
 
 export const wireVersion = "v0.9.1";
 export const surfaceId = "storefront";
