@@ -16,6 +16,8 @@ Verified 2026-09-20 on the production Vite output served by `pnpm exec wrangler 
 
 Desktop presents the product rail, focus and configuration side by side, with the composer below the focus/configuration area. Mobile preserves the reading order: products, focused content, configuration, composer. Full-page screenshots were visually reviewed for spacing, clipping, branding and empty-state readability.
 
+Rechecked after converting the component stylesheet to Tailwind utilities: the same checks pass at 1440, 1050, 850, 601, 600, 390 and 320px widths, including the tablet/mobile transition. The desktop and mobile region positions and sizes match the original captures. Screenshots below reflect the Tailwind implementation.
+
 - [Desktop screenshot](desktop.svg)
 - [Mobile screenshot](mobile.svg)
 

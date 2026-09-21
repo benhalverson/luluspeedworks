@@ -34,6 +34,8 @@ Runtime TypeScript/TSX coverage includes unimported application files, the entry
 
 `src/storefront/catalog.tsx` declares six stable approved component implementations: PitBench, BrandHeader, ProductRail, ProductFocus, Configuration and ShoppingComposer. The root schema marks regional references with A2UI `componentId()`. Button and Input are minimal shadcn adaptations; `components.json` records the Tailwind/shadcn configuration.
 
+Layout, typography, responsive variants and control overrides use Tailwind utilities. `src/styles.css` contains only shared theme tokens and base styles. Named `tablet`, `bench` and `wide` breakpoints preserve the selected design's region transitions.
+
 `src/storefront/messages.ts` defines typed `createSurface`, `updateDataModel` and `updateComponents` messages. The focused title and description bind to data-model paths. `App` creates a fresh processor in each effect setup, feeds those local messages into it and renders `A2uiSurface`. Cleanup disposes the surface group; the official renderer owns and cleans up its node resolver subscriptions. Strict Mode replay therefore receives a fresh model instead of reusing a disposed one. There is no bootstrap endpoint.
 
 Pinned protocol set: `@a2ui/react` **0.11.1**, `@a2ui/web_core` **0.11.0**, Zod **3.25.76**, wire **v0.9.1**. React/React DOM **19.3.0**, TypeScript **7.0.2** and matching Vitest/V8 **5.0.1** were verified against npm's stable tags on 2026-09-20.
