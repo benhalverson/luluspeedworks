@@ -30,23 +30,11 @@ and its published `/open-api` document, plus `/categories`,
 
 ## Completeness and acceptance limits
 
-Fetch all expected explicit pages before publishing a snapshot, requiring
-consistent totals, page order, and a unique product count matching the total.
-Pagination flags and per-page arithmetic do not determine completeness.
-Fetch every product's detail membership; reject unknown category memberships
-and mismatched detail IDs. Missing fields fail Zod validation separately.
-Inconsistent snapshots report “Catalog changed while loading. Please retry.”
-The API provides no snapshot token, so concurrent edits with the same counts
-cannot be detected.
-
-TanStack Query 5.103.1 owns requests and cached server data. Categories and page
-one load concurrently, then remaining pages run concurrently, followed by
-parallel detail queries keyed by product ID. Every key includes the API origin.
-Successful data stays fresh indefinitely with the default five-minute inactive
-cache lifetime. Automatic retries and focus/reconnect refetching are disabled.
-Manual Retry cancels and resets the current origin's queries and reloads the
-two roots; fresh pagination determines the remaining requests. Native fetch
-combines query cancellation with a ten-second timeout and omits credentials.
+Fetch all explicit pages before publishing a snapshot, requiring consistent
+totals, page progression, counts, flags and unique listing IDs. Fetch every
+product's detail membership; reject missing/unknown categories and mismatched
+detail IDs. The API provides no snapshot token, so concurrent edits with the
+same counts cannot be detected; Retry starts a fresh read.
 
 Exact case-insensitive trimmed category names resolve RC Parts and Pit Tools
 (including the approved Pit Stuff alias). Multiple matches are ambiguous.

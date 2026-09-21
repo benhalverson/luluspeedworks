@@ -57,32 +57,3 @@ to verify that failed reads return no partial catalog.
 `pnpm check` passes with 51 tests and 100% coverage in all four metrics globally
 and per runtime file. This revision has not had a separate subagent review;
 the round-one reports above apply to the earlier implementation.
-
-## TanStack Query revision
-
-Replaces the request lifecycle at baseline
-`bdc92c54894ef46dcc24ebbd4b4832b20547b744` with TanStack Query 5.103.1.
-The previous success/failure result wrapper and serial catalog loader are
-removed. The controller only publishes derived view data and forwards actions;
-React holds category/page interaction state and the effect-owned A2UI resource.
-
-Implementation inspection checked query-key origin isolation, root/page/detail
-concurrency, cancellation, reset ordering, snapshot completeness, and stable
-processor cleanup. Retry resets inactive dependents as well as active queries
-before refetching roots, preventing cached memberships from surviving a new
-catalog read. The API contract document now describes the reduced consistency
-checks and distinguishes schema failures from changed snapshots.
-
-`pnpm check` passed: 35 tests, 100% statements/branches/functions/lines globally
-and per runtime file, lint, typecheck and production build. Tests use isolated
-QueryClients and the real A2UI renderer. They cover a 201-product, three-page
-response completed out of order; concurrent details; incomplete/failed
-snapshots; cache reuse; origin changes; five-minute cache defaults; manual
-retry with changed membership and fewer pages; malformed JSON/schema errors;
-timeout; obsolete completions; unchanged USD prices; category resets; image
-fallbacks; accessible status; and Strict Mode cleanup.
-
-The existing inline GitHub review thread list was empty at implementation
-time. Earlier independent reviews above do not cover this revision; no new
-subagent review was performed. Live acceptance limitations remain tracked by
-open issue #1.

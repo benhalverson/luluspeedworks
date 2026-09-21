@@ -32,12 +32,6 @@ The React/Vite project structure is adapted from the [Cloudflare templates](http
 
 MIT License. Copyright (c) 2018, Cloudflare, Inc. All rights reserved. The MIT permission grant and warranty disclaimer reproduced above apply to this starter attribution as well.
 
-# TanStack Query
-
-`@tanstack/react-query` and `@tanstack/query-core` 5.103.1 are distributed under the MIT License.
-Copyright (c) 2021-present Tanner Linsley.
-The MIT permission grant and warranty disclaimer reproduced above apply to these packages.
-
 # A2UI
 
 `@a2ui/react` and `@a2ui/web_core` are copyright Google LLC and distributed under Apache-2.0. The full package license is reproduced below. Package distributions retain their own copyright notices.
