@@ -1,7 +1,14 @@
 import { A2uiSurface } from "@a2ui/react/v0_9";
 import type { A2uiClientAction } from "@a2ui/web_core/v0_9";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Route, Routes, useLocation, useParams } from "react-router";
+import { authClient } from "./storefront/auth";
 import { cartActionSchema, useCart } from "./storefront/cart";
 import { cartView } from "./storefront/cart-view";
 import {
@@ -24,6 +31,9 @@ export function App() {
     <Routes>
       <Route path="/" element={<Storefront />} />
       <Route path="/products/:productId" element={<Storefront />} />
+      <Route path="/signin" element={<Storefront />} />
+      <Route path="/signup" element={<Storefront />} />
+      <Route path="/profile" element={<Storefront />} />
       <Route path="*" element={<Storefront />} />
     </Routes>
   );
@@ -35,10 +45,17 @@ function Storefront() {
   const { snapshot, status, failed, retry } = useCatalog(origin);
   const { pathname } = useLocation();
   const { productId } = useParams();
-  const id = pathname === "/" ? null : parseProductId(productId);
+  const id = ["/", "/signin", "/signup", "/profile"].includes(pathname)
+    ? null
+    : parseProductId(productId);
   const previousPath = useRef(pathname);
   const selected = useProduct(origin, id);
-  const bag = useCart(origin);
+  const session = authClient.useSession();
+  const bag = useCart(
+    origin,
+    session.data?.user?.id ?? null,
+    !session.isPending && !session.error,
+  );
   const [configurations, setConfigurations] = useState<
     Record<number, Configuration>
   >({});
@@ -159,7 +176,7 @@ function Storefront() {
     controller?.publish(snapshot, category, page, status, failed);
   }, [controller, snapshot, category, page, status, failed]);
   const detail = detailView(id, selected, config);
-  useEffect(() => {
+  useLayoutEffect(() => {
     controller?.publishCart(bagView);
   }, [controller, bagView]);
   useEffect(() => {

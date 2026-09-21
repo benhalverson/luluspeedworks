@@ -6,7 +6,7 @@ import { type CartSnapshot, cartSchema, useCart } from "../src/storefront/cart";
 import { testClient } from "./query-client";
 
 const origin = "https://cart.example.com";
-const key = `lulu-cart-v1:${origin}`;
+const key = `lulu-cart-v2:${origin}`;
 const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
 const filamentId = "76fe1f79-3f1e-43e4-b8f4-61159de5b93c";
 const item = {
@@ -35,12 +35,19 @@ let requests: {
 function save(pending = false) {
   localStorage.setItem(
     key,
-    JSON.stringify({ cartId, pending, revision: crypto.randomUUID() }),
+    JSON.stringify({
+      cartId,
+      guestToken: cartId,
+      ownerId: null,
+      pending,
+      revision: crypto.randomUUID(),
+    }),
   );
 }
-function mount() {
+function mount(identity: string | null = null, ready = true) {
   const client = testClient();
-  return renderHook(() => useCart(origin), {
+  return renderHook((props) => useCart(origin, props.identity, props.ready), {
+    initialProps: { identity, ready },
     wrapper: ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     ),
@@ -66,7 +73,8 @@ beforeEach(() => {
     requests.push({ path, method, body });
     expect(init?.credentials).toBe("include");
     expect(init?.cache).toBe("no-store");
-    if (path === "/cart/create") return Response.json({ cartId });
+    if (path === "/cart/create")
+      return Response.json({ cartId, guestToken: cartId });
     if (method === "GET") return Response.json(server);
     if (path === "/cart/add") {
       const current = server.items[0];
@@ -136,6 +144,7 @@ it("never automatically retries an ambiguous add and preserves its marker across
   const view = mount();
   await waitFor(() => expect(view.result.current.cart.isSuccess).toBe(true));
   const original = vi.mocked(fetch).getMockImplementation();
+  if (!original) throw new Error("Expected the cart fetch fixture");
   vi.mocked(fetch).mockImplementation(async (url, init) => {
     if (new URL(String(url)).pathname === "/cart/add") {
       server = { items: [line], total: 4.58 };
@@ -256,18 +265,161 @@ it("fails closed for unsupported locks, absent carts, HTTP failure and corrupt r
   );
 });
 
-it("does not send a mutation when saving the recovery marker fails", async () => {
+it("claims with the guest capability and stops sending it once owned", async () => {
   save();
-  const view = mount();
-  await waitFor(() => expect(view.result.current.cart.isSuccess).toBe(true));
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-    throw Error("Quota exceeded");
+  const view = mount("alice");
+  const original = vi.mocked(fetch).getMockImplementation();
+  if (!original) throw new Error("Expected the cart fetch fixture");
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (String(url).endsWith("/claim")) {
+      expect(new Headers(init?.headers).get("X-Cart-Token")).toBe(cartId);
+      return Response.json({ message: "claimed" });
+    }
+    return original(url, init);
   });
+  await waitFor(() => expect(view.result.current.claimable).toBe(true));
+  await act(() =>
+    view.result.current.mutation.mutateAsync({
+      kind: "claim",
+      userId: "alice",
+    }),
+  );
+  const stored = JSON.parse(localStorage.getItem(key) ?? "null");
+  expect(stored.ownerId).toBe("alice");
+  expect(stored.guestToken).toBeUndefined();
+  await act(() => view.result.current.cart.refetch());
+  const last = vi.mocked(fetch).mock.calls.at(-1);
+  expect(new Headers(last?.[1]?.headers).has("X-Cart-Token")).toBe(false);
+  expect(view.result.current.claimable).toBe(false);
+});
+
+it("hides private data on session expiry, account switch, and pending session verification", async () => {
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      cartId,
+      ownerId: "alice",
+      pending: false,
+      revision: crypto.randomUUID(),
+    }),
+  );
+  server = { items: [line], total: 4.58 };
+  const view = mount("alice");
+  await waitFor(() =>
+    expect(view.result.current.cart.data?.items).toHaveLength(1),
+  );
+  view.rerender({ identity: "alice", ready: false });
+  expect(view.result.current.cart.data).toBeUndefined();
   await act(async () => {
     await expect(
       view.result.current.mutation.mutateAsync({ kind: "add", item }),
-    ).rejects.toThrow("storage unavailable");
+    ).rejects.toThrow("session");
   });
-  expect(requests.every((r) => r.method === "GET")).toBe(true);
+  view.rerender({ identity: null, ready: true });
+  await waitFor(() =>
+    expect(view.result.current.cart.data?.items).toHaveLength(0),
+  );
+  const reads = requests.length;
+  view.rerender({ identity: "bob", ready: true });
+  await waitFor(() =>
+    expect(view.result.current.cart.data?.items).toHaveLength(0),
+  );
+  await act(() =>
+    view.result.current.mutation.mutateAsync({ kind: "claim", userId: "bob" }),
+  );
+  expect(requests).toHaveLength(reads);
+  expect(JSON.parse(localStorage.getItem(key) ?? "null").ownerId).toBe("alice");
 });
+
+it("retains an interrupted claim for its intended account and permits a safe retry", async () => {
+  save();
+  const view = mount("alice");
+  let failClaim = true;
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    if (String(url).endsWith("/claim")) {
+      if (failClaim) throw Error("Claim response lost");
+      return Response.json({ message: "already owned" });
+    }
+    return Response.json(server);
+  });
+  await act(async () => {
+    await expect(
+      view.result.current.mutation.mutateAsync({
+        kind: "claim",
+        userId: "alice",
+      }),
+    ).rejects.toThrow("lost");
+  });
+  expect(JSON.parse(localStorage.getItem(key) ?? "null")).toMatchObject({
+    ownerId: "alice",
+    guestToken: cartId,
+  });
+  failClaim = false;
+  await act(() =>
+    view.result.current.mutation.mutateAsync({
+      kind: "claim",
+      userId: "alice",
+    }),
+  );
+  expect(
+    JSON.parse(localStorage.getItem(key) ?? "null").guestToken,
+  ).toBeUndefined();
+});
+
+it("rechecks a claim after another tab clears the cart while waiting for the lock", async () => {
+  save();
+  const view = mount("alice");
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (_name: string, callback: () => Promise<CartSnapshot>) => {
+        localStorage.removeItem(key);
+        return callback();
+      },
+    },
+  });
+  await act(() =>
+    view.result.current.mutation.mutateAsync({
+      kind: "claim",
+      userId: "alice",
+    }),
+  );
+  expect(requests.every((request) => request.method === "GET")).toBe(true);
+});
+
+it("creates account-owned carts without requiring a guest token", async () => {
+  const view = mount("alice");
+  const original = vi.mocked(fetch).getMockImplementation();
+  if (!original) throw new Error("Expected the cart fetch fixture");
+  vi.mocked(fetch).mockImplementation(async (url, init) =>
+    String(url).endsWith("/cart/create")
+      ? Response.json({ cartId })
+      : original(url, init),
+  );
+  await act(() =>
+    view.result.current.mutation.mutateAsync({ kind: "add", item }),
+  );
+  expect(JSON.parse(localStorage.getItem(key) ?? "null")).toMatchObject({
+    ownerId: "alice",
+    cartId,
+  });
+});
+
+it.each([true, false])(
+  "does not send an item mutation when saving fails (existing cart: %s)",
+  async (existing) => {
+    if (existing) save();
+    const view = mount();
+    await waitFor(() => expect(view.result.current.cart.isSuccess).toBe(true));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw Error("Quota exceeded");
+    });
+    await act(async () => {
+      await expect(
+        view.result.current.mutation.mutateAsync({ kind: "add", item }),
+      ).rejects.toThrow("storage unavailable");
+    });
+    expect(requests.some((r) => r.path === "/cart/add")).toBe(false);
+  },
+);

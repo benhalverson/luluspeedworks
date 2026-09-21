@@ -13,6 +13,17 @@ import type { CartSnapshot } from "../src/storefront/cart";
 import { apiPage, categories, product } from "./catalog-fixtures";
 import { renderWithClient } from "./query-client";
 
+const session = vi.hoisted(() => ({
+  data: null as { user: { id: string; email: string } } | null,
+  isPending: false,
+  error: null as Error | null,
+  refetch: vi.fn(),
+}));
+vi.mock("../src/storefront/auth", async (original) => ({
+  ...(await original<typeof import("../src/storefront/auth")>()),
+  authClient: { useSession: () => session },
+}));
+
 const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
 const color = {
   publicId: "76fe1f79-3f1e-43e4-b8f4-61159de5b93c",
@@ -21,7 +32,7 @@ const color = {
   profile: "PLA",
   available: true,
 };
-const key = "lulu-cart-v1:https://api.benhalverson.dev";
+const key = "lulu-cart-v2:https://api.benhalverson.dev";
 const line = {
   id: 91,
   productId: "SKU-101",
@@ -36,6 +47,9 @@ let server: CartSnapshot;
 let failRead: boolean;
 let failWrite: boolean;
 beforeEach(() => {
+  session.data = null;
+  session.isPending = false;
+  session.error = null;
   localStorage.clear();
   server = { items: [], total: 0 };
   failRead = false;
@@ -49,6 +63,7 @@ beforeEach(() => {
   });
   vi.mocked(fetch).mockImplementation(async (url, init) => {
     const path = new URL(String(url)).pathname;
+    if (path === "/api/auth/get-session") return Response.json(null);
     if (path === "/categories") return Response.json(categories);
     if (path === "/products") return Response.json(apiPage([1]));
     if (path === "/product/1")
@@ -60,7 +75,8 @@ beforeEach(() => {
       });
     if (path === "/v2/colors")
       return Response.json({ success: true, data: [color] });
-    if (path === "/cart/create") return Response.json({ cartId });
+    if (path === "/cart/create")
+      return Response.json({ cartId, guestToken: cartId });
     if (init?.method === "GET")
       return failRead
         ? Response.json({}, { status: 403 })
@@ -80,7 +96,13 @@ afterEach(() => {
 function save(pending = false) {
   localStorage.setItem(
     key,
-    JSON.stringify({ cartId, pending, revision: crypto.randomUUID() }),
+    JSON.stringify({
+      cartId,
+      guestToken: cartId,
+      ownerId: null,
+      pending,
+      revision: crypto.randomUUID(),
+    }),
   );
 }
 function refreshFromAnotherTab(pending = false) {
@@ -96,6 +118,47 @@ async function ready() {
     ).not.toHaveTextContent("Updating"),
   );
 }
+
+it("removes private bag lines while a session is rechecking or changes account", async () => {
+  session.data = { user: { id: "alice", email: "alice@example.com" } };
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      cartId,
+      ownerId: "alice",
+      pending: false,
+      revision: crypto.randomUUID(),
+    }),
+  );
+  server = { items: [line], total: 2.29 };
+  const view = renderWithClient(<App />);
+  await waitFor(() =>
+    expect(screen.getByRole("region", { name: "Your bag" })).toHaveTextContent(
+      "SKU-101",
+    ),
+  );
+  session.isPending = true;
+  view.rerender(<App />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("region", { name: "Your bag" }),
+    ).not.toHaveTextContent("SKU-101"),
+  );
+  session.isPending = false;
+  session.error = Error("Session unavailable");
+  view.rerender(<App />);
+  expect(
+    screen.getByRole("region", { name: "Your bag" }),
+  ).not.toHaveTextContent("SKU-101");
+  session.error = null;
+  session.data = { user: { id: "bob", email: "bob@example.com" } };
+  view.rerender(<App />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("region", { name: "Your bag" }),
+    ).not.toHaveTextContent("SKU-101"),
+  );
+});
 
 it("uses real A2UI bindings for add, quantity changes, removal and explicit refresh", async () => {
   window.history.replaceState(null, "", "/products/1");

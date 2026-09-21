@@ -43,6 +43,8 @@ export const cartActionSchema = z.discriminatedUnion("kind", [
 const savedCartSchema = z
   .object({
     cartId: uuid,
+    guestToken: uuid.optional(),
+    ownerId: z.string().nullable().default(null),
     pending: z.boolean(),
     revision: uuid,
   })
@@ -60,17 +62,21 @@ async function request<T>(
   method = "GET",
   body?: object,
   signal?: AbortSignal,
+  guestToken?: string,
 ) {
   const response = await fetch(new URL(path, origin), {
     method,
     credentials: "include",
     cache: "no-store",
+    headers: {
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(guestToken ? { "X-Cart-Token": guestToken } : {}),
+    },
     signal: signal
       ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
       : AbortSignal.timeout(10_000),
     ...(body
       ? {
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         }
       : {}),
@@ -82,28 +88,43 @@ async function request<T>(
   return schema.parse(await response.json());
 }
 
-export function useCart(origin: string) {
+export function useCart(
+  origin: string,
+  identity: string | null = null,
+  ready = true,
+) {
   const client = useQueryClient();
-  const storageKey = `lulu-cart-v1:${origin}`;
-  const queryKey = ["cart", origin];
-  const [saved, setSaved] = useLocalStorage<SavedCart>(storageKey, null, {
+  const storageKey = `lulu-cart-v2:${origin}`;
+  const queryKey = ["cart", origin, identity];
+  const [stored, setSaved] = useLocalStorage<SavedCart>(storageKey, null, {
     deserializer: deserialize,
   });
+  const saved =
+    stored && (stored.ownerId === null || stored.ownerId === identity)
+      ? stored
+      : null;
   // Re-read inside the cross-tab lock: a hook render may predate another tab's write.
-  function readSaved() {
-    return deserialize(localStorage.getItem(storageKey) ?? "null");
+  function readSaved(owner = identity) {
+    const value = deserialize(localStorage.getItem(storageKey) ?? "null");
+    return value && (value.ownerId === null || value.ownerId === owner)
+      ? value
+      : null;
   }
   function persist(value: Exclude<SavedCart, null>) {
     setSaved(value);
     // useLocalStorage reports storage failures by logging. Do not send a write
     // unless the durable marker really was saved, including in private mode.
-    if (readSaved()?.revision !== value.revision)
+    if (
+      deserialize(localStorage.getItem(storageKey) ?? "null")?.revision !==
+      value.revision
+    )
       throw new Error(
         "Bag storage unavailable. Enable browser storage before shopping.",
       );
   }
   const cart = useQuery({
-    queryKey: [...queryKey, saved?.cartId, saved?.revision],
+    enabled: ready,
+    queryKey: [...queryKey, ready, saved?.cartId, saved?.revision],
     queryFn: ({ signal }) =>
       saved
         ? request(
@@ -113,6 +134,7 @@ export function useCart(origin: string) {
             "GET",
             undefined,
             signal,
+            saved.guestToken,
           )
         : empty,
     retry: false,
@@ -128,20 +150,60 @@ export function useCart(origin: string) {
     scope: { id: storageKey },
     retry: false,
     networkMode: "always",
-    mutationFn: async (input: CartAction | { kind: "acknowledge" }) => {
+    mutationFn: async (
+      input:
+        | CartAction
+        | { kind: "acknowledge" }
+        | { kind: "claim"; userId: string },
+    ) => {
+      if (!ready) throw new Error("Wait for your session to finish loading.");
+      if (input.kind === "claim" && !readSaved(input.userId)?.guestToken)
+        return empty;
       if (!navigator.locks)
         throw new Error(
           "Shopping requires a browser with secure cross-tab locks.",
         );
       return navigator.locks.request(storageKey, async () => {
         await client.cancelQueries({ queryKey });
-        let current = readSaved();
+        let current = readSaved(
+          input.kind === "claim" ? input.userId : identity,
+        );
+        if (input.kind === "claim") {
+          if (!current?.guestToken) return empty;
+          // Bind an uncertain claim to this account before sending it. Another
+          // account must never retry this capability after an interrupted login.
+          current = {
+            ...current,
+            ownerId: input.userId,
+            revision: crypto.randomUUID(),
+          };
+          persist(current);
+          await request(
+            origin,
+            `/cart/${current.cartId}/claim`,
+            z.object({ message: z.string() }),
+            "POST",
+            undefined,
+            undefined,
+            current.guestToken,
+          );
+          persist({
+            ...current,
+            guestToken: undefined,
+            revision: crypto.randomUUID(),
+          });
+          return empty;
+        }
         if (input.kind === "acknowledge") {
           if (!current) return empty;
           const checked = await request(
             origin,
             `/cart/${current.cartId}`,
             cartSchema,
+            "GET",
+            undefined,
+            undefined,
+            current.guestToken,
           );
           persist({
             ...current,
@@ -163,11 +225,17 @@ export function useCart(origin: string) {
           const created = await request(
             origin,
             "/cart/create",
-            z.object({ cartId: uuid }),
+            z
+              .object({ cartId: uuid, guestToken: uuid.optional() })
+              .refine(
+                (value) => identity !== null || Boolean(value.guestToken),
+              ),
             "POST",
           );
           current = {
             cartId: created.cartId,
+            guestToken: created.guestToken,
+            ownerId: identity,
             pending: false,
             revision: crypto.randomUUID(),
           };
@@ -177,6 +245,10 @@ export function useCart(origin: string) {
           origin,
           `/cart/${current.cartId}`,
           cartSchema,
+          "GET",
+          undefined,
+          undefined,
+          current.guestToken,
         );
         if (
           action.kind !== "add" &&
@@ -215,11 +287,17 @@ export function useCart(origin: string) {
               ? "PUT"
               : "DELETE",
           body,
+          undefined,
+          current.guestToken,
         );
         const after = await request(
           origin,
           `/cart/${current.cartId}`,
           cartSchema,
+          "GET",
+          undefined,
+          undefined,
+          current.guestToken,
         );
         persist({ ...current, pending: false, revision: crypto.randomUUID() });
         return after;
@@ -227,5 +305,10 @@ export function useCart(origin: string) {
     },
     onSettled: () => client.invalidateQueries({ queryKey }),
   });
-  return { cart, mutation, uncertain: saved?.pending === true };
+  return {
+    cart,
+    mutation,
+    uncertain: saved?.pending === true,
+    claimable: Boolean(saved?.guestToken && identity !== null),
+  };
 }

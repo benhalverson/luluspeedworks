@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { AccountPanel } from "./account";
 
 /**
  * Converts A2UI child references to arguments for `buildChild(id, basePath)`.
@@ -39,6 +40,7 @@ const PitBench = createComponentImplementation(
       </a>
       {buildChild(props.header)}
       <main id="bench" tabIndex={-1}>
+        <AccountPanel />
         <div className="flex items-center justify-between gap-3 py-5.5 tablet:gap-0 tablet:py-6.5">
           <p className="text-[11px] font-semibold leading-normal tracking-[0.14em]">
             THE PIT BENCH
