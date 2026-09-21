@@ -14,16 +14,23 @@ import {
   returnDestination,
   signupFields,
 } from "./auth";
+import { useCart } from "./cart";
 
 /** Credentials stay in React Hook Form, outside the A2UI/model data tree. */
 export function AccountPanel() {
   const session = authClient.useSession();
+  const user = session.data?.user;
+  const bag = useCart(
+    apiOrigin,
+    user?.id ?? null,
+    !session.isPending && !session.error,
+  );
   const location = useLocation();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const client = useQueryClient();
   const [, , removeSavedCart] = useLocalStorage(
-    `lulu-cart-v1:${apiOrigin}`,
+    `lulu-cart-v2:${apiOrigin}`,
     null,
   );
   const mode = location.pathname === "/signup" ? "signup" : "signin";
@@ -48,9 +55,10 @@ export function AccountPanel() {
       kind: "signin" | "signup" | "passkey";
       values: AccountFields;
     }) => authenticate(kind, values),
-    onSuccess: async () => {
+    onSuccess: async (user) => {
       await client.cancelQueries();
       client.clear();
+      await bag.mutation.mutateAsync({ kind: "claim", userId: user.id });
       reset();
       await session.refetch();
       navigate(destination, { replace: true });
@@ -69,8 +77,11 @@ export function AccountPanel() {
       navigate("/", { replace: true });
     },
   });
-  const pending = login.isPending || logout.isPending;
-  const message = login.error?.message ?? logout.error?.message;
+  const pending = login.isPending || logout.isPending || bag.mutation.isPending;
+  const message =
+    login.error?.message ??
+    logout.error?.message ??
+    bag.mutation.error?.message;
   return (
     <section
       aria-label="Account"
@@ -78,9 +89,19 @@ export function AccountPanel() {
     >
       {session.isPending ? (
         <p role="status">Checking your session…</p>
-      ) : session.data?.user ? (
+      ) : user ? (
         <div className="flex flex-wrap items-center gap-3">
-          <p>Signed in as {session.data.user.email}</p>
+          <p>Signed in as {user.email}</p>
+          {bag.claimable ? (
+            <Button
+              disabled={pending}
+              onClick={() =>
+                bag.mutation.mutate({ kind: "claim", userId: user.id })
+              }
+            >
+              Restore this bag
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             disabled={pending}

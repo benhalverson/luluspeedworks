@@ -28,6 +28,7 @@
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:ci": "pnpm check",
     "test:coverage": "vitest run --coverage",
     "build": "vite build",
     "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build"
