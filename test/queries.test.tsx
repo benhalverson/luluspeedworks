@@ -82,7 +82,9 @@ it("starts roots, remaining pages and details concurrently, publishes only a com
   );
   await screen.findByText("Part 1");
   expect(screen.getAllByRole("listitem")).toHaveLength(10);
-  expect(screen.getByRole("status")).toHaveTextContent("201 products");
+  expect(
+    screen.getByRole("status", { name: "Catalog status" }),
+  ).toHaveTextContent("201 products");
   for (let page = 2; page <= 21; page++)
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
   expect(screen.getByText("Part 201")).toBeVisible();
@@ -156,9 +158,9 @@ it.each(["page", "detail"])(
       ),
     ).toEqual(["/categories", "/products?page=1&limit=100", "/product/1"]);
     fireEvent.click(screen.getByRole("button", { name: "RC Parts" }));
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "No products in RC Parts.",
-    );
+    expect(
+      screen.getByRole("status", { name: "Catalog status" }),
+    ).toHaveTextContent("No products in RC Parts.");
   },
 );
 

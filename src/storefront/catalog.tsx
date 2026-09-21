@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { AccountPanel } from "./account";
 
 /**
  * Converts A2UI child references to arguments for `buildChild(id, basePath)`.
@@ -26,6 +27,7 @@ const PitBench = createComponentImplementation(
       focus: componentId(),
       configuration: componentId(),
       composer: componentId(),
+      cart: componentId(),
     }),
   },
   ({ props, buildChild }) => (
@@ -38,6 +40,7 @@ const PitBench = createComponentImplementation(
       </a>
       {buildChild(props.header)}
       <main id="bench" tabIndex={-1}>
+        <AccountPanel />
         <div className="flex items-center justify-between gap-3 py-5.5 tablet:gap-0 tablet:py-6.5">
           <p className="text-[11px] font-semibold leading-normal tracking-[0.14em]">
             THE PIT BENCH
@@ -51,6 +54,7 @@ const PitBench = createComponentImplementation(
           {buildChild(props.focus)}
           {buildChild(props.configuration)}
           {buildChild(props.composer)}
+          {buildChild(props.cart)}
         </div>
       </main>
       <footer className="mt-9 flex flex-col items-start justify-between gap-2 border-t border-border pt-6 pb-7.5 tablet:flex-row tablet:items-center tablet:gap-5">
@@ -90,17 +94,12 @@ const BrandHeader = createComponentImplementation(
           </span>
         </span>
       </Link>
-      <Button
-        className="ml-auto"
-        variant="outline"
-        disabled
-        aria-label="Shopping bag, 0 items"
+      <a
+        className="ml-auto rounded border border-border px-4 py-2 focus-visible:outline-2 focus-visible:outline-ring"
+        href="#bag"
       >
-        Bag{" "}
-        <span className="rounded-[3px] bg-primary px-1.25 text-primary-foreground">
-          0
-        </span>
-      </Button>
+        Bag
+      </a>
     </header>
   ),
 );
@@ -137,6 +136,7 @@ const ProductRail = createComponentImplementation(
       </nav>
       <p
         role="status"
+        aria-label="Catalog status"
         aria-live="polite"
         aria-atomic="true"
         className="py-3 text-[13px] leading-relaxed text-muted-foreground"
@@ -366,6 +366,7 @@ const Configuration = createComponentImplementation(
       color: CommonSchemas.DynamicString,
       quantity: CommonSchemas.DynamicString,
       quantityError: CommonSchemas.DynamicString,
+      addDisabled: CommonSchemas.DynamicBoolean,
       colorStatus: CommonSchemas.DynamicString,
       retryVisible: CommonSchemas.DynamicBoolean,
       retry: CommonSchemas.Action,
@@ -452,11 +453,22 @@ const Configuration = createComponentImplementation(
       <p id="quantity-error" aria-live="polite" className="mt-2 text-sm">
         {props.quantityError}
       </p>
-      <Button className="mt-7 mb-2.5 w-full justify-between" disabled>
+      <Button
+        className="mt-7 mb-2.5 w-full justify-between"
+        disabled={props.addDisabled}
+        onClick={() =>
+          void context.dispatchAction({
+            event: {
+              name: "add-to-bag",
+              context: { productId: props.productId },
+            },
+          })
+        }
+      >
         Add to bag <span aria-hidden="true">↗</span>
       </Button>
       <p className="text-center text-[11px] leading-[1.6] text-muted-foreground">
-        Shopping is not available yet.
+        Review your bag before checkout.
       </p>
     </section>
   ),
@@ -524,6 +536,143 @@ const ShoppingComposer = createComponentImplementation(
   ),
 );
 
+const CartPanel = createComponentImplementation(
+  {
+    name: "CartPanel",
+    schema: z.object({
+      lines: CommonSchemas.ChildList,
+      status: CommonSchemas.DynamicString,
+      total: CommonSchemas.DynamicString,
+      busy: CommonSchemas.DynamicBoolean,
+      uncertain: CommonSchemas.DynamicBoolean,
+    }),
+  },
+  ({ props, buildChild, context }) => (
+    <section
+      id="bag"
+      tabIndex={-1}
+      aria-labelledby="bag-title"
+      className="col-span-full rounded border border-border p-5 [overflow-wrap:anywhere]"
+    >
+      <h2 id="bag-title" className="font-display text-2xl">
+        Your bag
+      </h2>
+      <p role="status" aria-label="Bag status" className="my-3 text-sm">
+        {props.status}
+      </p>
+      <ul className="space-y-4">
+        {props.lines.map((child) => buildChild(...childReference(child)))}
+      </ul>
+      <p className="my-4">{props.total}</p>
+      <Button
+        variant="outline"
+        disabled={props.busy}
+        onClick={() =>
+          void context.dispatchAction({ event: { name: "refresh-bag" } })
+        }
+      >
+        Refresh bag
+      </Button>
+      {props.uncertain ? (
+        <div className="mt-3">
+          <p className="mb-2 text-sm">
+            The last change may still complete. Refresh and check the quantities
+            before making another change.
+          </p>
+          <Button
+            disabled={props.busy}
+            onClick={() =>
+              void context.dispatchAction({
+                event: { name: "acknowledge-bag" },
+              })
+            }
+          >
+            I checked my bag
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  ),
+);
+const CartLine = createComponentImplementation(
+  {
+    name: "CartLine",
+    schema: z.object({
+      itemId: CommonSchemas.DynamicNumber,
+      name: CommonSchemas.DynamicString,
+      description: CommonSchemas.DynamicString,
+      quantity: CommonSchemas.DynamicNumber,
+      price: CommonSchemas.DynamicString,
+      disabled: CommonSchemas.DynamicBoolean,
+      unavailable: CommonSchemas.DynamicBoolean,
+    }),
+  },
+  ({ props, context }) => (
+    <li className="border-b border-border pb-4">
+      <h3 className="font-semibold">{props.name}</h3>
+      <p className="text-sm text-muted-foreground">{props.description}</p>
+      <p>
+        {props.price} · Quantity: {props.quantity}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          aria-label={`Decrease ${props.name} quantity`}
+          disabled={props.disabled || props.unavailable || props.quantity <= 1}
+          onClick={() =>
+            void context.dispatchAction({
+              event: {
+                name: "change-bag",
+                context: {
+                  kind: "update",
+                  itemId: props.itemId,
+                  quantity: props.quantity - 1,
+                },
+              },
+            })
+          }
+        >
+          −
+        </Button>
+        <Button
+          variant="outline"
+          aria-label={`Increase ${props.name} quantity`}
+          disabled={props.disabled || props.unavailable || props.quantity >= 69}
+          onClick={() =>
+            void context.dispatchAction({
+              event: {
+                name: "change-bag",
+                context: {
+                  kind: "update",
+                  itemId: props.itemId,
+                  quantity: props.quantity + 1,
+                },
+              },
+            })
+          }
+        >
+          +
+        </Button>
+        <Button
+          variant="outline"
+          aria-label={`Remove ${props.name}`}
+          disabled={props.disabled}
+          onClick={() =>
+            void context.dispatchAction({
+              event: {
+                name: "change-bag",
+                context: { kind: "remove", itemId: props.itemId },
+              },
+            })
+          }
+        >
+          Remove
+        </Button>
+      </div>
+    </li>
+  ),
+);
+
 export const componentCatalog = new Catalog(
   "https://luluspeedworks.com/catalog/scaffold/v1",
   [
@@ -537,5 +686,7 @@ export const componentCatalog = new Catalog(
     ShoppingComposer,
     ColorOption,
     DetailImage,
+    CartPanel,
+    CartLine,
   ],
 );

@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
+import { cleanStores } from "nanostores";
 import { afterEach, beforeEach, vi } from "vitest";
 
 beforeEach(() => {
@@ -10,8 +11,10 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  const { authClient } = await import("../src/storefront/auth");
+  cleanStores(...Object.values(authClient.$store?.atoms ?? {}));
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();

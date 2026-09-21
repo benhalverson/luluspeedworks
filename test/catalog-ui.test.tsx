@@ -20,9 +20,9 @@ it.each([
     });
     render(<App />);
     await screen.findByRole("link", { name: "Part 1" });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Shop all: 1 products.",
-    );
+    expect(
+      screen.getByRole("status", { name: "Catalog status" }),
+    ).toHaveTextContent("Shop all: 1 products.");
   },
 );
 
@@ -30,7 +30,9 @@ it("renders entries through the official bindings, pages and resets category pag
   mockCatalog(21);
   const process = vi.spyOn(MessageProcessor.prototype, "processMessages");
   render(<App />);
-  expect(screen.getByRole("status")).toHaveTextContent("Loading");
+  expect(
+    screen.getByRole("status", { name: "Catalog status" }),
+  ).toHaveTextContent("Loading");
   await screen.findByText("Part 1");
   expect(screen.getAllByRole("listitem")).toHaveLength(10);
   expect(screen.getAllByText("$2.29")).toHaveLength(10);
@@ -54,9 +56,9 @@ it("renders entries through the official bindings, pages and resets category pag
   );
   fireEvent.click(screen.getByRole("button", { name: "Pit Tools" }));
   fireEvent.click(screen.getByRole("button", { name: "Shop all" }));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Shop all: 21 products. Page 1 of 3.",
-  );
+  expect(
+    screen.getByRole("status", { name: "Catalog status" }),
+  ).toHaveTextContent("Shop all: 21 products. Page 1 of 3.");
   expect(
     process.mock.calls.filter(
       ([messages]) =>
@@ -96,19 +98,21 @@ it("distinguishes unavailable mappings from an empty category and permits retry"
     .mockResolvedValueOnce(Response.json({ id: 1, categories: [] }));
   render(<App />);
   await screen.findByText("Part 1");
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Shop all: 1 products. Page 1 of 1.",
-  );
+  expect(
+    screen.getByRole("status", { name: "Catalog status" }),
+  ).toHaveTextContent("Shop all: 1 products. Page 1 of 1.");
   expect(screen.getByText("$2.29")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Pit Tools" }));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "No products in Pit Tools.",
-  );
+  expect(
+    screen.getByRole("status", { name: "Catalog status" }),
+  ).toHaveTextContent("No products in Pit Tools.");
   expect(
     screen.queryByRole("button", { name: "Retry" }),
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "RC Parts" }));
-  expect(screen.getByRole("status")).toHaveTextContent("RC Parts unavailable");
+  expect(
+    screen.getByRole("status", { name: "Catalog status" }),
+  ).toHaveTextContent("RC Parts unavailable");
   mockCatalog(0);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByText("No products in RC Parts.");
@@ -128,7 +132,9 @@ it.each(["malformed", "unavailable", "network"])(
     vi.stubEnv("VITE_API_ORIGIN", "https://configured.example.com");
     render(<App />);
     await screen.findByRole("button", { name: "Retry" });
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(
+      screen.getByRole("status", { name: "Catalog status" }),
+    ).toHaveTextContent(
       kind === "malformed"
         ? "Malformed catalog response"
         : "Catalog unavailable",
@@ -160,9 +166,9 @@ it("announces timeout with manual retry", async () => {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1);
   });
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Catalog request timed out",
-  );
+  expect(
+    screen.getByRole("status", { name: "Catalog status" }),
+  ).toHaveTextContent("Catalog request timed out");
   view.unmount();
 
   vi.useRealTimers();
@@ -190,7 +196,9 @@ it("preserves a selection during loading and aborts Strict Mode/unmount work", a
     "aria-pressed",
     "true",
   );
-  expect(screen.getByRole("status")).toHaveTextContent("Loading");
+  expect(
+    screen.getByRole("status", { name: "Catalog status" }),
+  ).toHaveTextContent("Loading");
   await act(async () => view.unmount());
   expect(signals).toHaveLength(4);
   expect(signals.every((signal) => signal.aborted)).toBe(true);
