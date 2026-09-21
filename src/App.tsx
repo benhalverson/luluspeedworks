@@ -29,6 +29,22 @@ export function App() {
     typeof id === "number"
       ? (configurations[id] ?? emptyConfiguration)
       : emptyConfiguration;
+  const verifiedColors =
+    selected.colors.isSuccess && !selected.colors.isFetching
+      ? selected.colors.data
+      : undefined;
+  useEffect(() => {
+    if (typeof id !== "number" || !verifiedColors) return;
+    setConfigurations((current) => {
+      const saved = current[id];
+      if (
+        !saved?.color ||
+        verifiedColors.data.some((color) => color.publicId === saved.color)
+      )
+        return current;
+      return { ...current, [id]: { ...saved, color: "", unavailable: true } };
+    });
+  }, [id, verifiedColors]);
   const [category, setCategory] = useState<Category>("all");
   const [page, setPage] = useState(1);
   const [controller, setController] =
@@ -58,7 +74,7 @@ export function App() {
           ...current,
           [result.data.productId]: {
             ...(current[result.data.productId] ?? emptyConfiguration),
-            ...(color !== undefined ? { color } : {}),
+            ...(color !== undefined ? { color, unavailable: false } : {}),
             ...(quantity !== undefined ? { quantity } : {}),
           },
         }));

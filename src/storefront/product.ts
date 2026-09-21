@@ -30,13 +30,19 @@ export const colorsSchema = z
 export const configurationSchema = z.object({
   color: z.string(),
   quantity: z.string(),
+  unavailable: z.boolean(),
 });
 export const configureActionSchema = configurationSchema
+  .pick({ color: true, quantity: true })
   .partial()
   .extend({ productId: productIdSchema });
 export type Configuration = z.infer<typeof configurationSchema>;
 export type SelectedProduct = z.infer<typeof selectedProductSchema>;
-export const emptyConfiguration: Configuration = { color: "", quantity: "1" };
+export const emptyConfiguration: Configuration = {
+  color: "",
+  quantity: "1",
+  unavailable: false,
+};
 
 export const detailViewSchema = z.object({
   active: z.boolean(),
@@ -140,7 +146,7 @@ export function detailView(
         ? "Loading available colors…"
         : colors.isError
           ? productFailure(colors.error, "Colors")
-          : config.color && !selected
+          : config.unavailable || (config.color && !selected)
             ? "Your selected color is unavailable. Choose another color."
             : options.length === 0
               ? "No colors are currently available for this material."

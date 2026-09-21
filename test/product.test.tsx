@@ -162,6 +162,17 @@ it("uses native links, remembers each product, revalidates entry, and resets on 
   );
   expect(screen.getByLabelText("Color")).toHaveValue("");
   expect(screen.getByLabelText("Quantity")).toHaveValue(3);
+  enter("/products/2");
+  await screen.findByRole("heading", { level: 1, name: "Part 2" });
+  options = [red, otherRed];
+  enter("/products/1");
+  await ready();
+  expect(screen.getByLabelText("Color")).toHaveValue("");
+  expect(
+    screen.getByText(
+      "Your selected color is unavailable. Choose another color.",
+    ),
+  ).toBeVisible();
   view.unmount();
   render(<App />);
   await screen.findByRole("option", { name: new RegExp(otherRed.publicId) });
@@ -326,6 +337,41 @@ it("times out detail requests and offers retry", async () => {
   );
   view.unmount();
   vi.useRealTimers();
+});
+
+it("cancels obsolete color requests and cannot apply their late UUIDs to another material", async () => {
+  window.history.replaceState(null, "", "/products/1");
+  let finish: (response: Response) => void = () => {};
+  const pending = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  respond({ catalogPending: true, colors: () => pending });
+  render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+  await screen.findByText("Loading available colors…");
+  const signal = vi
+    .mocked(fetch)
+    .mock.calls.find(([url]) =>
+      String(url).includes("/v2/colors"),
+    )?.[1]?.signal;
+  const petg = { ...otherRed, profile: "PETG" };
+  respond({
+    catalogPending: true,
+    detail: async () => Response.json({ ...detail(2), filamentType: "PETG" }),
+    colors: async () => Response.json({ success: true, data: [petg] }),
+  });
+  enter("/products/2");
+  await screen.findByRole("option", { name: new RegExp(otherRed.publicId) });
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish(Response.json({ success: true, data: [red] })));
+  expect(
+    screen.queryByRole("option", { name: new RegExp(red.publicId) }),
+  ).toBeNull();
+  expect(screen.getByText("Material: PETG")).toBeVisible();
+  expect(screen.getByLabelText("Color")).toHaveValue("");
 });
 
 it("rejects forged and stale A2UI configuration payloads", async () => {

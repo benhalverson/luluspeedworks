@@ -14,7 +14,18 @@ On 2026-09-20 Pacific time, started the existing `3dprinter-web-api` checkout us
 - `GET /v2/colors?profile=PLA&available=true`: HTTP 200, 13 options, UUID identities, all PLA and available.
 - `GET /v2/colors?profile=PETG&available=true`: initial unsuccessful response followed by HTTP 200 with four available PETG UUID options. The UI exposes retry for this failure mode.
 
-These are real responses from a locally running API and its existing state/upstream integration, not test fixtures. They do not establish deployed API parity. Attempts to access `https://api.benhalverson.dev/docs` and representative deployed endpoints failed through the web tool and shell DNS/connection setup. Deployed verification remains outstanding.
+These are real responses from a locally running API and its existing state/upstream integration, not test fixtures.
+
+The first deployed requests failed through the web tool and shell DNS/connection setup. A later retry using `curl --noproxy '*'` succeeded, completing representative deployed verification:
+
+- `https://api.benhalverson.dev/docs`: HTTP 200; `/open-api`: OpenAPI 3.1.0 with the same missing product-response schema and unused `public` discrepancy.
+- `/products?page=1&limit=2`: one product, numeric ID 1, SKU `TEST-3398813686-9BLO`, price 2.29, material PLA.
+- `/product/1`: name `Test`, description `test`, price 2.29, fixed PLA, absolute primary image and two gallery URLs, empty categories. This also verifies the real uncategorized Shop all case.
+- `/product/9007199254740991`: HTTP 404, `Product not found`.
+- `/v2/colors?profile=PLA&available=true`: success, 37 UUID options, every option PLA and available.
+- `/v2/colors?profile=PETG&available=true`: success, five available PETG UUID options.
+
+Local and deployed catalogs/color counts differ, so neither was used as a hardcoded application fixture.
 
 The local detail route returns the product object directly. `id`, `skuNumber`, and filament `publicId` have separate purposes. USD display and price units follow the existing catalog contract; the observed detail price matches the catalog price. Compatibility is rendered only when supplied as text; description is displayed verbatim as safe React text. No compatibility is inferred from a product name.
 
