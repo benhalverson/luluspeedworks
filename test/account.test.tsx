@@ -1,0 +1,119 @@
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { beforeEach, expect, it, vi } from "vitest";
+import { AccountPanel } from "../src/storefront/account";
+import { authClient, authenticate } from "../src/storefront/auth";
+import { renderWithClient, testClient } from "./query-client";
+
+const session = vi.hoisted(() => ({
+  data: null as { user: { email: string } } | null,
+  isPending: false,
+  error: null as Error | null,
+  refetch: vi.fn(async () => {}),
+}));
+vi.mock("../src/storefront/auth", async (original) => ({
+  ...(await original<typeof import("../src/storefront/auth")>()),
+  authenticate: vi.fn(async () => ({ id: "user-1", email: "ben@example.com" })),
+  authClient: {
+    useSession: () => session,
+    signOut: vi.fn(async () => ({ error: null })),
+  },
+}));
+beforeEach(() => {
+  session.data = null;
+  session.error = null;
+  session.isPending = false;
+  localStorage.clear();
+  vi.mocked(authenticate).mockClear();
+});
+async function fill(password = "test password") {
+  fireEvent.change(screen.getByLabelText("Email"), {
+    target: { value: "ben@example.com" },
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: password },
+  });
+}
+it("validates signup and uses React Hook Form without putting credentials in A2UI", async () => {
+  window.history.replaceState(null, "", "/signup?returnTo=%2Fproducts%2F1");
+  renderWithClient(<AccountPanel />);
+  await fill("short");
+  fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+  await screen.findByText("Use at least 8 characters.");
+  expect(authenticate).not.toHaveBeenCalled();
+  await fill();
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Ben" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+  await waitFor(() =>
+    expect(authenticate).toHaveBeenCalledWith("signup", {
+      name: "Ben",
+      email: "ben@example.com",
+      password: "test password",
+    }),
+  );
+  await waitFor(() => expect(location.pathname).toBe("/products/1"));
+});
+it("preserves the guest cart on login and clears private query data", async () => {
+  window.history.replaceState(null, "", "/signin?returnTo=%2Fcheckout");
+  const key = "lulu-cart-v1:https://api.benhalverson.dev";
+  localStorage.setItem(key, JSON.stringify({ cartId: "guest-cart" }));
+  const client = testClient();
+  client.setQueryData(["orders"], { private: true });
+  renderWithClient(<AccountPanel />, client);
+  await fill();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in with password" }),
+  );
+  await waitFor(() => expect(location.pathname).toBe("/checkout"));
+  expect(localStorage.getItem(key)).toContain("guest-cart");
+  expect(client.getQueryData(["orders"])).toBeUndefined();
+});
+it("uses passkeys independently of password validation and shows cancellation failures", async () => {
+  window.history.replaceState(null, "", "/signin");
+  vi.mocked(authenticate).mockRejectedValueOnce(Error("Passkey was cancelled"));
+  renderWithClient(<AccountPanel />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in with a passkey" }),
+  );
+  await screen.findByText("Passkey was cancelled");
+  expect(authenticate).toHaveBeenCalledWith("passkey", {
+    name: "",
+    email: "",
+    password: "",
+  });
+  fireEvent.click(screen.getByRole("link", { name: "Create an account" }));
+  await screen.findByLabelText("Name");
+  expect(screen.queryByText("Passkey was cancelled")).toBeNull();
+  fireEvent.click(screen.getByRole("link", { name: /Already have/ }));
+  expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible();
+});
+it("clears browser cart capability on signout and reports signout failure", async () => {
+  session.data = { user: { email: "ben@example.com" } };
+  const key = "lulu-cart-v1:https://api.benhalverson.dev";
+  localStorage.setItem(key, JSON.stringify({ cartId: "owned-cart" }));
+  vi.mocked(authClient.signOut).mockResolvedValueOnce({
+    data: null,
+    error: {
+      message: "Sign-out failed",
+      status: 500,
+      statusText: "Internal Server Error",
+    },
+  });
+  renderWithClient(<AccountPanel />);
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  await screen.findByText("Sign-out failed. Please try again.");
+  expect(localStorage.getItem(key)).toContain("owned-cart");
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  await waitFor(() => expect(localStorage.getItem(key)).toBeNull());
+});
+it("keeps browsing available while session lookup is pending or unavailable", () => {
+  session.isPending = true;
+  const view = renderWithClient(<AccountPanel />);
+  expect(screen.getByText("Checking your session…")).toBeVisible();
+  session.isPending = false;
+  session.error = Error("Network unavailable");
+  view.rerender(<AccountPanel />);
+  expect(screen.getByText(/Session unavailable/)).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Sign in or create an account" }),
+  ).toHaveAttribute("href", "/signin?returnTo=%2F");
+});
