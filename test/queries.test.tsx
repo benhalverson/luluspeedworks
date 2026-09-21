@@ -116,7 +116,9 @@ it("reuses the five-minute cache, disables automatic refetch, and isolates every
   second.rerender(<App />);
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(6));
   await screen.findByText("Part 1");
-  expect(client.getQueryCache().getAll()).toHaveLength(6);
+  expect(
+    client.getQueryCache().findAll({ queryKey: ["catalog"] }),
+  ).toHaveLength(6);
   expect(
     fetcher.mock.calls
       .slice(3)

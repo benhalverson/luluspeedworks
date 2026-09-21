@@ -107,7 +107,10 @@ it("loads a direct URL independently, renders authoritative safe detail and UUID
       ).toBeNull(),
     );
   }
-  fireEvent.error(screen.getAllByRole("img", { name: "Part 1" })[0]);
+  for (const image of screen
+    .getAllByRole("img", { name: "Part 1" })
+    .slice(0, 1))
+    fireEvent.error(image);
   expect(screen.getByText("Image unavailable")).toBeVisible();
   expect(screen.getByRole("button", { name: /Add to bag/ })).toBeDisabled();
   expect(fetch).toHaveBeenCalledWith(
@@ -335,6 +338,8 @@ it("rejects forged and stale A2UI configuration payloads", async () => {
     target: { value: "2" },
   });
   const surface = dispatch.mock.instances[0];
+  if (!(surface instanceof SurfaceModel))
+    throw new Error("Expected an A2UI surface");
   for (const context of [
     {},
     { productId: 2, quantity: "5" },

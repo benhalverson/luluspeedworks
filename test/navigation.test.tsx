@@ -15,7 +15,7 @@ it("leaves modified, external, download, target, hash, and query links to the br
     { ctrlKey: true },
     { shiftKey: true },
     { altKey: true },
-  ]) {
+  ] as const) {
     act(() =>
       link.dispatchEvent(
         new MouseEvent("click", { bubbles: true, cancelable: true, ...init }),
@@ -36,7 +36,7 @@ it("leaves modified, external, download, target, hash, and query links to the br
     ["href", "/#bench"],
     ["href", "/products/1?x=1"],
     ["href", "/about"],
-  ]) {
+  ] as const) {
     link.setAttribute(attribute, value);
     act(() =>
       link.dispatchEvent(

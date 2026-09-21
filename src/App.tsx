@@ -57,7 +57,7 @@ export function App() {
         setConfigurations((current) => ({
           ...current,
           [result.data.productId]: {
-            ...config,
+            ...(current[result.data.productId] ?? emptyConfiguration),
             ...(color !== undefined ? { color } : {}),
             ...(quantity !== undefined ? { quantity } : {}),
           },
