@@ -4,7 +4,7 @@ import {
   NodeResolver,
   SurfaceGroupModel,
 } from "@a2ui/web_core/v0_9";
-import { act, render, screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../src/App";
@@ -14,6 +14,7 @@ import {
   surfaceId,
   wireVersion,
 } from "../src/storefront/messages";
+import { renderWithClient as render } from "./query-client";
 
 describe("Pit Bench", () => {
   it("renders the actual A2UI surface with empty regions and unavailable commerce", () => {
@@ -24,7 +25,7 @@ describe("Pit Bench", () => {
     expect(
       screen.getByRole("complementary", { name: "THE PARTS DRAWER" }),
     ).toBeVisible();
-    expect(screen.getByText("No products yet")).toBeVisible();
+    expect(screen.getByText("Loading catalog…")).toBeVisible();
     expect(screen.getByRole("region", { name: "MAKE IT YOURS" })).toBeVisible();
     expect(screen.getByText("No part selected")).toBeVisible();
     expect(
@@ -33,8 +34,16 @@ describe("Pit Bench", () => {
     expect(
       screen.getByAltText("Lulu the dog with a racing badge"),
     ).toHaveAttribute("src", "/brand/lulu-logo.svg");
-    for (const button of screen.getAllByRole("button"))
-      expect(button).toBeDisabled();
+    for (const name of [
+      "Add to bag",
+      "Send shopping request",
+      "Shopping bag, 0 items",
+      "Previous",
+      "Next",
+    ])
+      expect(
+        screen.getByRole("button", { name: new RegExp(name) }),
+      ).toBeDisabled();
     for (const label of ["Color", "Quantity", "YOUR SHOPPING REQUEST"])
       expect(
         screen.getByLabelText(label, { selector: "input" }),
@@ -49,7 +58,7 @@ describe("Pit Bench", () => {
     const processor = new MessageProcessor([componentCatalog], undefined, {
       version: wireVersion,
     });
-    processor.processMessages(initialMessages);
+    processor.processMessages(structuredClone(initialMessages));
     const surface = processor.model.getSurface(surfaceId);
     if (!surface) throw new Error("Initial messages must create the surface");
     const view = render(<A2uiSurface surface={surface} />);

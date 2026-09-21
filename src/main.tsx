@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource/barlow/latin-400.css";
@@ -9,10 +10,13 @@ import "./styles.css";
 import { App } from "./App";
 
 const container = document.getElementById("root");
+const queryClient = new QueryClient();
 if (!container) throw new Error("Missing storefront root element");
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
   </StrictMode>,
 );

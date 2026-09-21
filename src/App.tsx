@@ -1,25 +1,38 @@
+import { A2uiSurface } from "@a2ui/react/v0_9";
+import { useEffect, useEffectEvent, useState } from "react";
 import {
-  A2uiSurface,
-  type ReactComponentImplementation,
-} from "@a2ui/react/v0_9";
-import { MessageProcessor, type SurfaceModel } from "@a2ui/web_core/v0_9";
-import { useEffect, useState } from "react";
-import { componentCatalog } from "./storefront/catalog";
-import { initialMessages, surfaceId, wireVersion } from "./storefront/messages";
+  type Category,
+  createCatalogController,
+} from "./storefront/controller";
+import { useCatalog } from "./storefront/queries";
 
 export function App() {
-  const [surface, setSurface] =
-    useState<SurfaceModel<ReactComponentImplementation>>();
-
+  const origin =
+    import.meta.env.VITE_API_ORIGIN || "https://api.benhalverson.dev";
+  const { snapshot, status, failed, retry } = useCatalog(origin);
+  const [category, setCategory] = useState<Category>("all");
+  const [page, setPage] = useState(1);
+  const [controller, setController] =
+    useState<ReturnType<typeof createCatalogController>>();
+  const onAction = useEffectEvent((name: string) => {
+    if (name === "retry") {
+      setPage(1);
+      void retry();
+    } else if (name === "all" || name === "rc" || name === "pit") {
+      setCategory(name);
+      setPage(1);
+    } else if (name === "previous") setPage((page) => page - 1);
+    else if (name === "next") setPage((page) => page + 1);
+  });
   useEffect(() => {
-    // Each effect setup owns a new processor: Strict Mode can safely replay it.
-    const processor = new MessageProcessor([componentCatalog], undefined, {
-      version: wireVersion,
-    });
-    processor.processMessages(initialMessages);
-    setSurface(processor.model.getSurface(surfaceId));
-    return () => processor.model.dispose();
+    const current = createCatalogController((name) => onAction(name));
+    setController(current);
+    return () => current.dispose();
   }, []);
-
-  return surface ? <A2uiSurface surface={surface} /> : null;
+  useEffect(() => {
+    controller?.publish(snapshot, category, page, status, failed);
+  }, [controller, snapshot, category, page, status, failed]);
+  return controller?.surface ? (
+    <A2uiSurface surface={controller.surface} />
+  ) : null;
 }
