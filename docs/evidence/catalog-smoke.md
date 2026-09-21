@@ -1,5 +1,28 @@
 # Issue #1 verification
 
+## TanStack Query revision — 2026-09-20
+
+`pnpm check` passed on the revision replacing the manual loader with TanStack
+Query 5.103.1: 35 tests, 100% statements/branches/functions/lines globally and per
+runtime file, lint, typecheck and production build. The real renderer tests
+cover concurrent and out-of-order pagination/details, caching and origin
+isolation, manual retry, cancellation and obsolete completions.
+
+Production assets were served from the isolated query worktree with
+`pnpm exec vite preview --host ::1` on port 3000. The live API success-path
+smoke initially could not complete; `getent hosts api.benhalverson.dev` failed
+and curl reported `Could not resolve host`. A subsequent Chromium run recovered
+and passed at 1440×1000, 850×900, 390×844 and 320×740: hashed production assets,
+categories/list/detail HTTP 200, CORS, logo loading, visible category controls,
+Tab/Enter/Space navigation, visible focus, disabled empty-result pagination,
+no horizontal overflow, no console/page errors and no failed requests.
+No API interception or fixtures were used in the browser.
+
+The live catalog still lacks RC Parts and categorized products. Populated
+imagery, multiple memberships, pagination and prices therefore remain fixture
+coverage only. Shop all/RC Parts report unavailable and Pit Tools reports no
+products. Issue #1 stays open.
+
 ## Production assets against the deployed API
 
 2026-09-20: built with `pnpm check` and served using `pnpm exec vite preview

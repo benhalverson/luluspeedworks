@@ -33,117 +33,88 @@ export type CatalogSnapshot = {
   products: CatalogProduct[];
 };
 
-type CatalogResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; kind: "malformed" | "unavailable" | "timeout" | "aborted" };
-
 export function imageUrl(value: string | null | undefined): string {
   return value && /^https?:\/\//i.test(value) && URL.canParse(value)
     ? value
     : "";
 }
-
-async function request<T>(
+export async function request<T>(
   origin: string,
   path: string,
   schema: z.ZodType<T>,
   signal: AbortSignal,
-): Promise<CatalogResult<T>> {
+): Promise<T> {
   const timeout = new AbortController();
-  const timer = setTimeout(() => timeout.abort(), 10_000);
+  const timer = setTimeout(
+    () => timeout.abort(new Error("Catalog request timed out. Please retry.")),
+    10_000,
+  );
   try {
     const response = await fetch(new URL(path, origin), {
       credentials: "omit",
       signal: AbortSignal.any([signal, timeout.signal]),
     });
-    if (!response.ok) return { ok: false, kind: "unavailable" };
-    const result = schema.safeParse(await response.json());
-    return result.success
-      ? { ok: true, value: result.data }
-      : { ok: false, kind: "malformed" };
+    if (!response.ok) throw new Error("Catalog unavailable. Please retry.");
+    return schema.parse(await response.json());
   } catch (error) {
-    if (signal.aborted) return { ok: false, kind: "aborted" };
-    if (timeout.signal.aborted) return { ok: false, kind: "timeout" };
-    return {
-      ok: false,
-      kind: error instanceof SyntaxError ? "malformed" : "unavailable",
-    };
+    if (timeout.signal.aborted) throw timeout.signal.reason;
+    throw error;
   } finally {
     clearTimeout(timer);
   }
 }
+export { categoriesSchema, detailSchema, pageSchema };
+export type ProductPage = z.infer<typeof pageSchema>;
+export type ProductDetail = z.infer<typeof detailSchema>;
 
-export async function fetchCatalog(
-  origin: string,
-  signal: AbortSignal,
-): Promise<CatalogResult<CatalogSnapshot>> {
-  const [categoryResult, pageResult] = await Promise.all([
-    request(origin, "/categories", categoriesSchema, signal),
-    request(origin, "/products?page=1&limit=100", pageSchema, signal),
-  ]);
-  if (!categoryResult.ok) return categoryResult;
-  if (!pageResult.ok) return pageResult;
-  const categories = categoryResult.value;
-  const first = pageResult.value;
+export function completeCatalog(
+  categories: CatalogSnapshot["categories"],
+  pages: ProductPage[],
+  details: ProductDetail[],
+): CatalogSnapshot | undefined {
+  const first = pages[0];
+  if (!first) return undefined;
+  const { totalItems, totalPages } = first.pagination;
+  const products = pages.flatMap((page) => page.products);
   const categoryIds = new Set(
     categories.map((category) => category.categoryId),
   );
-  if (categoryIds.size !== categories.length)
-    return { ok: false, kind: "malformed" };
-  const { totalItems, totalPages } = first.pagination;
-  const products: CatalogProduct[] = [];
-  const seen = new Set<number>();
-  let page = first;
-  for (let number = 1; number <= Math.max(1, totalPages); number++) {
-    const pagination = page.pagination;
-    if (
-      pagination.page !== number ||
-      pagination.limit !== 100 ||
-      pagination.totalItems !== totalItems ||
-      pagination.totalPages !== totalPages ||
-      totalPages !== Math.ceil(totalItems / 100) ||
-      pagination.hasNextPage !== number < totalPages ||
-      pagination.hasPreviousPage !== number > 1 ||
-      page.products.length !== Math.min(100, totalItems - (number - 1) * 100)
-    )
-      return { ok: false, kind: "malformed" };
-    for (const product of page.products) {
-      if (seen.has(product.id)) return { ok: false, kind: "malformed" };
-      seen.add(product.id);
-      const detailResult = await request(
-        origin,
-        `/product/${product.id}`,
-        detailSchema,
-        signal,
-      );
-      if (!detailResult.ok) return detailResult;
-      const detail = detailResult.value;
-      if (
-        detail.id !== product.id ||
+  if (
+    pages.length !== Math.max(1, totalPages) ||
+    pages.some(
+      (page, index) =>
+        page.pagination.page !== index + 1 ||
+        page.pagination.totalItems !== totalItems ||
+        page.pagination.totalPages !== totalPages,
+    ) ||
+    products.length !== totalItems ||
+    new Set(products.map((product) => product.id)).size !== totalItems ||
+    categoryIds.size !== categories.length ||
+    details.length !== products.length ||
+    details.some(
+      (detail, index) =>
+        detail.id !== products.at(index)?.id ||
         detail.categories.some(
           (category) => !categoryIds.has(category.categoryId),
-        )
-      )
-        return { ok: false, kind: "malformed" };
-      products.push({
-        ...product,
-        image: imageUrl(product.image),
-        currency: "USD",
-        categoryIds: [
-          ...new Set(detail.categories.map((category) => category.categoryId)),
-        ],
-      });
-    }
-    if (number < totalPages) {
-      const nextPage = await request(
-        origin,
-        `/products?page=${number + 1}&limit=100`,
-        pageSchema,
-        signal,
-      );
-      if (!nextPage.ok) return nextPage;
-      page = nextPage.value;
-    }
-  }
-  return { ok: true, value: { categories, products } };
+        ),
+    )
+  )
+    return undefined;
+  return {
+    categories,
+    products: products.map((product, index) => ({
+      ...product,
+      image: imageUrl(product.image),
+      currency: "USD",
+      categoryIds: [
+        ...new Set(
+          details
+            .slice(index, index + 1)
+            .flatMap((detail) =>
+              detail.categories.map((category) => category.categoryId),
+            ),
+        ),
+      ],
+    })),
+  };
 }

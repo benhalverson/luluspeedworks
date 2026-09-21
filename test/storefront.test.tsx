@@ -4,7 +4,7 @@ import {
   NodeResolver,
   SurfaceGroupModel,
 } from "@a2ui/web_core/v0_9";
-import { act, render, screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../src/App";
@@ -14,6 +14,7 @@ import {
   surfaceId,
   wireVersion,
 } from "../src/storefront/messages";
+import { renderWithClient as render } from "./query-client";
 
 describe("Pit Bench", () => {
   it("renders the actual A2UI surface with empty regions and unavailable commerce", () => {

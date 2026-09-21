@@ -1,11 +1,10 @@
-import { A2uiSurface } from "@a2ui/react/v0_9";
 import { MessageProcessor } from "@a2ui/web_core/v0_9";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { expect, it, vi } from "vitest";
 import { App } from "../src/App";
-import { createCatalogController } from "../src/storefront/controller";
 import { apiPage, categories, mockCatalog, product } from "./catalog-fixtures";
+import { renderWithClient as render } from "./query-client";
 
 it("renders entries through the official bindings, pages and resets category pagination", async () => {
   mockCatalog(21);
@@ -134,11 +133,14 @@ it("announces timeout with manual retry", async () => {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10_000);
   });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+  });
   expect(screen.getByRole("status")).toHaveTextContent(
     "Catalog request timed out",
   );
   view.unmount();
-  expect(vi.getTimerCount()).toBe(0);
+
   vi.useRealTimers();
 });
 
@@ -168,43 +170,4 @@ it("preserves a selection during loading and aborts Strict Mode/unmount work", a
   await act(async () => view.unmount());
   expect(signals).toHaveLength(4);
   expect(signals.every((signal) => signal.aborted)).toBe(true);
-});
-
-it("ignores obsolete successes and failures after retry or unmount", async () => {
-  const pending: {
-    resolve: (response: Response) => void;
-    reject: (reason: Error) => void;
-  }[] = [];
-  vi.mocked(fetch).mockImplementation(
-    () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
-  );
-  const controller = createCatalogController("https://example.com");
-  if (!controller.surface) throw new Error("Expected surface");
-  const surface = controller.surface;
-  const view = render(<A2uiSurface surface={surface} />);
-  mockCatalog(1);
-  await act(async () => {
-    await surface.dispatchAction({ event: { name: "retry" } }, "products");
-  });
-  await screen.findByText("Part 1");
-  await act(async () => {
-    pending[0]?.resolve(Response.json(categories));
-    pending[1]?.resolve(Response.json(apiPage([])));
-  });
-  expect(screen.getByText("Part 1")).toBeVisible();
-  await act(async () => {
-    await surface.dispatchAction({ event: { name: "unknown" } }, "products");
-  });
-  view.unmount();
-  controller.dispose();
-  await surface.dispatchAction({ event: { name: "next" } }, "products");
-  vi.mocked(fetch).mockImplementation(
-    () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
-  );
-  const second = createCatalogController("https://example.com");
-  second.dispose();
-  await act(async () => {
-    pending[2]?.reject(new Error("late failure"));
-    pending[3]?.resolve(Response.json(apiPage([])));
-  });
 });

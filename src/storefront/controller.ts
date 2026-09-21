@@ -1,5 +1,5 @@
 import { type A2uiMessage, MessageProcessor } from "@a2ui/web_core/v0_9";
-import { type CatalogSnapshot, fetchCatalog } from "./api";
+import type { CatalogSnapshot } from "./api";
 import { browse, type Category, categoryNames } from "./browse";
 import { componentCatalog } from "./catalog";
 import {
@@ -14,30 +14,10 @@ const prices = new Intl.NumberFormat("en-US", {
   currency: "USD",
 });
 
-export function createCatalogController(origin: string) {
-  let snapshot: CatalogSnapshot | undefined;
-  let category: Category = "all";
-  let page = 1;
-  let request: AbortController;
+export function createCatalogController(onAction: (name: string) => void) {
   const processor = new MessageProcessor(
     [componentCatalog],
-    (action) => {
-      if (action.name === "retry") {
-        void load();
-        return;
-      }
-      if (
-        action.name === "all" ||
-        action.name === "rc" ||
-        action.name === "pit"
-      ) {
-        category = action.name;
-        page = 1;
-      } else if (action.name === "previous") page--;
-      else if (action.name === "next") page++;
-      else return;
-      publish();
-    },
+    (action) => onAction(action.name),
     { version: wireVersion },
   );
   processor.processMessages(structuredClone(initialMessages));
@@ -60,14 +40,20 @@ export function createCatalogController(origin: string) {
     ]);
   }
 
-  function publish() {
+  function publish(
+    snapshot: CatalogSnapshot | undefined,
+    category: Category,
+    page: number,
+    status: string,
+    failed: boolean,
+  ) {
     const selection = {
       all: category === "all",
       rc: category === "rc",
       pit: category === "pit",
     };
     if (!snapshot) {
-      update(selection);
+      update({ ...loadingRail, ...selection, status, retryVisible: failed });
       return;
     }
     const result = browse(snapshot, category, page);
@@ -95,39 +81,10 @@ export function createCatalogController(origin: string) {
     });
   }
 
-  async function load() {
-    request?.abort();
-    const current = new AbortController();
-    request = current;
-    snapshot = undefined;
-    page = 1;
-    update({
-      ...loadingRail,
-      all: category === "all",
-      rc: category === "rc",
-      pit: category === "pit",
-    });
-    const result = await fetchCatalog(origin, current.signal);
-    if (current.signal.aborted) return;
-    if (result.ok) {
-      snapshot = result.value;
-      publish();
-    } else {
-      current.abort();
-      const status =
-        result.kind === "malformed"
-          ? "Malformed catalog response. Please retry."
-          : result.kind === "timeout"
-            ? "Catalog request timed out. Please retry."
-            : "Catalog unavailable. Please retry.";
-      update({ status, retryVisible: true });
-    }
-  }
-  void load();
   return {
     surface: processor.model.getSurface(surfaceId),
+    publish,
     dispose() {
-      request.abort();
       processor.model.dispose();
     },
   };
