@@ -33,11 +33,9 @@ export type CatalogSnapshot = {
   products: CatalogProduct[];
 };
 
-export class CatalogFailure extends Error {
-  constructor(public readonly kind: "malformed" | "unavailable" | "timeout") {
-    super(kind);
-  }
-}
+type CatalogResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; kind: "malformed" | "unavailable" | "timeout" | "aborted" };
 
 export function imageUrl(value: string | null | undefined): string {
   return value && /^https?:\/\//i.test(value) && URL.canParse(value)
@@ -50,7 +48,7 @@ async function request<T>(
   path: string,
   schema: z.ZodType<T>,
   signal: AbortSignal,
-): Promise<T> {
+): Promise<CatalogResult<T>> {
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), 10_000);
   try {
@@ -58,14 +56,18 @@ async function request<T>(
       credentials: "omit",
       signal: AbortSignal.any([signal, timeout.signal]),
     });
-    if (!response.ok) throw new CatalogFailure("unavailable");
-    return schema.parse(await response.json());
+    if (!response.ok) return { ok: false, kind: "unavailable" };
+    const result = schema.safeParse(await response.json());
+    return result.success
+      ? { ok: true, value: result.data }
+      : { ok: false, kind: "malformed" };
   } catch (error) {
-    if (signal.aborted) throw error;
-    if (timeout.signal.aborted) throw new CatalogFailure("timeout");
-    if (error instanceof z.ZodError || error instanceof SyntaxError)
-      throw new CatalogFailure("malformed");
-    throw error;
+    if (signal.aborted) return { ok: false, kind: "aborted" };
+    if (timeout.signal.aborted) return { ok: false, kind: "timeout" };
+    return {
+      ok: false,
+      kind: error instanceof SyntaxError ? "malformed" : "unavailable",
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -74,16 +76,20 @@ async function request<T>(
 export async function fetchCatalog(
   origin: string,
   signal: AbortSignal,
-): Promise<CatalogSnapshot> {
-  const [categories, first] = await Promise.all([
+): Promise<CatalogResult<CatalogSnapshot>> {
+  const [categoryResult, pageResult] = await Promise.all([
     request(origin, "/categories", categoriesSchema, signal),
     request(origin, "/products?page=1&limit=100", pageSchema, signal),
   ]);
+  if (!categoryResult.ok) return categoryResult;
+  if (!pageResult.ok) return pageResult;
+  const categories = categoryResult.value;
+  const first = pageResult.value;
   const categoryIds = new Set(
     categories.map((category) => category.categoryId),
   );
   if (categoryIds.size !== categories.length)
-    throw new CatalogFailure("malformed");
+    return { ok: false, kind: "malformed" };
   const { totalItems, totalPages } = first.pagination;
   const products: CatalogProduct[] = [];
   const seen = new Set<number>();
@@ -100,23 +106,25 @@ export async function fetchCatalog(
       pagination.hasPreviousPage !== number > 1 ||
       page.products.length !== Math.min(100, totalItems - (number - 1) * 100)
     )
-      throw new CatalogFailure("malformed");
+      return { ok: false, kind: "malformed" };
     for (const product of page.products) {
-      if (seen.has(product.id)) throw new CatalogFailure("malformed");
+      if (seen.has(product.id)) return { ok: false, kind: "malformed" };
       seen.add(product.id);
-      const detail = await request(
+      const detailResult = await request(
         origin,
         `/product/${product.id}`,
         detailSchema,
         signal,
       );
+      if (!detailResult.ok) return detailResult;
+      const detail = detailResult.value;
       if (
         detail.id !== product.id ||
         detail.categories.some(
           (category) => !categoryIds.has(category.categoryId),
         )
       )
-        throw new CatalogFailure("malformed");
+        return { ok: false, kind: "malformed" };
       products.push({
         ...product,
         image: imageUrl(product.image),
@@ -126,13 +134,16 @@ export async function fetchCatalog(
         ],
       });
     }
-    if (number < totalPages)
-      page = await request(
+    if (number < totalPages) {
+      const nextPage = await request(
         origin,
         `/products?page=${number + 1}&limit=100`,
         pageSchema,
         signal,
       );
+      if (!nextPage.ok) return nextPage;
+      page = nextPage.value;
+    }
   }
-  return { categories, products };
+  return { ok: true, value: { categories, products } };
 }

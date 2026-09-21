@@ -1,5 +1,5 @@
 import { type A2uiMessage, MessageProcessor } from "@a2ui/web_core/v0_9";
-import { CatalogFailure, type CatalogSnapshot, fetchCatalog } from "./api";
+import { type CatalogSnapshot, fetchCatalog } from "./api";
 import { browse, type Category, categoryNames } from "./browse";
 import { componentCatalog } from "./catalog";
 import {
@@ -107,18 +107,17 @@ export function createCatalogController(origin: string) {
       rc: category === "rc",
       pit: category === "pit",
     });
-    try {
-      const result = await fetchCatalog(origin, current.signal);
-      if (current.signal.aborted) return;
-      snapshot = result;
+    const result = await fetchCatalog(origin, current.signal);
+    if (current.signal.aborted) return;
+    if (result.ok) {
+      snapshot = result.value;
       publish();
-    } catch (error) {
-      if (current.signal.aborted) return;
+    } else {
       current.abort();
       const status =
-        error instanceof CatalogFailure && error.kind === "malformed"
+        result.kind === "malformed"
           ? "Malformed catalog response. Please retry."
-          : error instanceof CatalogFailure && error.kind === "timeout"
+          : result.kind === "timeout"
             ? "Catalog request timed out. Please retry."
             : "Catalog unavailable. Please retry.";
       update({ status, retryVisible: true });

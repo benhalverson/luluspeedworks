@@ -3,8 +3,8 @@
 Fixed main baseline: `52e23f3885ced5218aee65cefd30a740b1da31dd`.
 Implementation reviewed: `ae29f297198854a813281e348d1909f9f3e2914f`.
 Diff: `git diff 52e23f3885ced5218aee65cefd30a740b1da31dd...HEAD`.
-Later documentation updates record the review and additional contract read;
-runtime and test code are unchanged from the reviewed implementation.
+The reports below cover that implementation. The subsequent user-requested
+removal of the custom error class is recorded separately below.
 
 ## Round 1 — gpt-5.6-luna
 
@@ -45,3 +45,15 @@ Standards: 0 findings. Spec: 0 code findings, 1 external acceptance gate.
 Adversarial: 0 findings. No confirmed P3 bugs required filing. Existing issues
 were checked before review delivery. Stop after round 1 as requested; no model
 escalation is needed with no unresolved P0–P2 implementation findings.
+
+## Subsequent failure-handling revision
+
+At the user's request, the adapter now returns plain typed success/failure
+results instead of throwing a custom CatalogFailure class. The controller
+handles those results directly. Expected HTTP, network, validation, timeout
+and cancellation outcomes are explicit. Added a later-page HTTP failure test
+to verify that failed reads return no partial catalog.
+
+`pnpm check` passes with 51 tests and 100% coverage in all four metrics globally
+and per runtime file. This revision has not had a separate subagent review;
+the round-one reports above apply to the earlier implementation.

@@ -1,14 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
-import { CatalogFailure, fetchCatalog, imageUrl } from "../src/storefront/api";
+import { fetchCatalog, imageUrl } from "../src/storefront/api";
 import { apiPage, categories, mockCatalog, product } from "./catalog-fixtures";
 
 const origin = "https://api.example.com";
 const read = () => fetchCatalog(origin, new AbortController().signal);
+async function readSnapshot() {
+  const result = await read();
+  if (!result.ok) throw new Error(`Unexpected catalog failure: ${result.kind}`);
+  return result.value;
+}
 
 describe("catalog contract", () => {
   it("loads every page and authoritative multiple memberships without changing prices", async () => {
     const fetcher = mockCatalog(101);
-    const result = await read();
+    const result = await readSnapshot();
     expect(result.products).toHaveLength(101);
     expect(result.products[100]).toEqual({
       id: 101,
@@ -26,7 +31,7 @@ describe("catalog contract", () => {
   });
   it("accepts an empty catalog", async () => {
     mockCatalog(0);
-    expect((await read()).products).toEqual([]);
+    expect((await readSnapshot()).products).toEqual([]);
   });
   it.each([null, undefined, "", "bad", "https://", "javascript:alert(1)"])(
     "uses a neutral fallback for %s",
@@ -49,7 +54,7 @@ describe("catalog contract", () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(Response.json(categories))
       .mockResolvedValueOnce(Response.json(page));
-    await expect(read()).rejects.toEqual(new CatalogFailure("malformed"));
+    await expect(read()).resolves.toEqual({ ok: false, kind: "malformed" });
   });
   it.each([{ totalItems: 102 }, { totalPages: 3 }, { page: 1 }])(
     "rejects changing later pages %j",
@@ -65,7 +70,7 @@ describe("catalog contract", () => {
         if (!original) throw new Error("Missing fixture");
         return original(input, init);
       });
-      await expect(read()).rejects.toEqual(new CatalogFailure("malformed"));
+      await expect(read()).resolves.toEqual({ ok: false, kind: "malformed" });
     },
   );
   it("rejects repeated IDs instead of claiming completeness", async () => {
@@ -73,7 +78,18 @@ describe("catalog contract", () => {
       .mockResolvedValueOnce(Response.json(categories))
       .mockResolvedValueOnce(Response.json(apiPage([1, 1])))
       .mockResolvedValueOnce(Response.json({ id: 1, categories }));
-    await expect(read()).rejects.toEqual(new CatalogFailure("malformed"));
+    await expect(read()).resolves.toEqual({ ok: false, kind: "malformed" });
+  });
+  it("returns a later-page request failure without publishing partial products", async () => {
+    const fetcher = mockCatalog(101);
+    const original = fetcher.getMockImplementation();
+    fetcher.mockImplementation(async (input, init) => {
+      if (String(input).includes("page=2"))
+        return new Response(null, { status: 503 });
+      if (!original) throw new Error("Missing fixture");
+      return original(input, init);
+    });
+    await expect(read()).resolves.toEqual({ ok: false, kind: "unavailable" });
   });
   it.each([
     { id: 2, categories },
@@ -84,13 +100,13 @@ describe("catalog contract", () => {
       .mockResolvedValueOnce(Response.json(categories))
       .mockResolvedValueOnce(Response.json(apiPage([1])))
       .mockResolvedValueOnce(Response.json(detail));
-    await expect(read()).rejects.toEqual(new CatalogFailure("malformed"));
+    await expect(read()).resolves.toEqual({ ok: false, kind: "malformed" });
   });
   it("rejects duplicate category IDs", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(Response.json([categories[0], categories[0]]))
       .mockResolvedValueOnce(Response.json(apiPage([])));
-    await expect(read()).rejects.toEqual(new CatalogFailure("malformed"));
+    await expect(read()).resolves.toEqual({ ok: false, kind: "malformed" });
   });
   it("deduplicates detail memberships and normalizes a missing image", async () => {
     vi.mocked(fetch)
@@ -104,7 +120,7 @@ describe("catalog contract", () => {
       .mockResolvedValueOnce(
         Response.json({ id: 1, categories: [categories[0], categories[0]] }),
       );
-    expect((await read()).products[0]).toMatchObject({
+    expect((await readSnapshot()).products[0]).toMatchObject({
       image: "",
       categoryIds: [1],
     });
@@ -117,17 +133,17 @@ describe("catalog contract", () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(Response.json(categories))
       .mockResolvedValueOnce(Response.json(body));
-    await expect(read()).rejects.toEqual(new CatalogFailure("malformed"));
+    await expect(read()).resolves.toEqual({ ok: false, kind: "malformed" });
   });
   it("rejects invalid JSON", async () => {
     vi.mocked(fetch).mockImplementation(async () => new Response("{"));
-    await expect(read()).rejects.toEqual(new CatalogFailure("malformed"));
+    await expect(read()).resolves.toEqual({ ok: false, kind: "malformed" });
   });
   it("reports HTTP and network failures", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 503 }));
-    await expect(read()).rejects.toEqual(new CatalogFailure("unavailable"));
+    await expect(read()).resolves.toEqual({ ok: false, kind: "unavailable" });
     vi.mocked(fetch).mockRejectedValue(new TypeError("offline"));
-    await expect(read()).rejects.toThrow("offline");
+    await expect(read()).resolves.toEqual({ ok: false, kind: "unavailable" });
   });
   it("times out at ten seconds and clears its timers", async () => {
     vi.useFakeTimers();
@@ -139,9 +155,10 @@ describe("catalog contract", () => {
           ),
         ),
     );
-    const result = expect(read()).rejects.toEqual(
-      new CatalogFailure("timeout"),
-    );
+    const result = expect(read()).resolves.toEqual({
+      ok: false,
+      kind: "timeout",
+    });
     await vi.advanceTimersByTimeAsync(10_000);
     await result;
     expect(vi.getTimerCount()).toBe(0);
@@ -153,8 +170,9 @@ describe("catalog contract", () => {
     vi.mocked(fetch).mockRejectedValue(
       new DOMException("aborted", "AbortError"),
     );
-    await expect(fetchCatalog(origin, controller.signal)).rejects.toThrow(
-      "aborted",
-    );
+    await expect(fetchCatalog(origin, controller.signal)).resolves.toEqual({
+      ok: false,
+      kind: "aborted",
+    });
   });
 });
