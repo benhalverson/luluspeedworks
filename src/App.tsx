@@ -33,6 +33,7 @@ export function App() {
       <Route path="/products/:productId" element={<Storefront />} />
       <Route path="/signin" element={<Storefront />} />
       <Route path="/signup" element={<Storefront />} />
+      <Route path="/profile" element={<Storefront />} />
       <Route path="*" element={<Storefront />} />
     </Routes>
   );
@@ -44,7 +45,7 @@ function Storefront() {
   const { snapshot, status, failed, retry } = useCatalog(origin);
   const { pathname } = useLocation();
   const { productId } = useParams();
-  const id = ["/", "/signin", "/signup"].includes(pathname)
+  const id = ["/", "/signin", "/signup", "/profile"].includes(pathname)
     ? null
     : parseProductId(productId);
   const previousPath = useRef(pathname);

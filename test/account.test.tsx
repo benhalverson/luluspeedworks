@@ -10,14 +10,21 @@ const session = vi.hoisted(() => ({
   error: null as Error | null,
   refetch: vi.fn(async () => {}),
 }));
-vi.mock("../src/storefront/auth", async (original) => ({
-  ...(await original<typeof import("../src/storefront/auth")>()),
-  authenticate: vi.fn(async () => ({ id: "user-1", email: "ben@example.com" })),
-  authClient: {
-    useSession: () => session,
-    signOut: vi.fn(async () => ({ error: null })),
-  },
-}));
+vi.mock("../src/storefront/auth", async (original) => {
+  const actual = await original<typeof import("../src/storefront/auth")>();
+  return {
+    ...actual,
+    authenticate: vi.fn(async () => ({
+      id: "user-1",
+      email: "ben@example.com",
+    })),
+    authClient: {
+      $fetch: actual.authClient.$fetch,
+      useSession: () => session,
+      signOut: vi.fn(async () => ({ error: null })),
+    },
+  };
+});
 beforeEach(() => {
   session.data = null;
   session.error = null;
@@ -187,6 +194,33 @@ it("can retry an interrupted guest claim after the session is restored", async (
   expect(
     JSON.parse(localStorage.getItem(key) ?? "null").guestToken,
   ).toBeUndefined();
+});
+
+it("opens the existing account's profile and removes its fields on expiry", async () => {
+  window.history.replaceState(null, "", "/profile");
+  session.data = { user: { id: "user-1", email: "ben@example.com" } };
+  vi.mocked(fetch).mockResolvedValue(
+    Response.json({
+      id: "user-1",
+      email: "ben@example.com",
+      firstName: "Ben",
+      lastName: "Driver",
+      address: "123 Example Avenue",
+      city: "Portland",
+      state: "OR",
+      zipCode: "97201",
+      country: "US",
+      phone: "5035550100",
+    }),
+  );
+  const view = renderWithClient(<AccountPanel />);
+  await screen.findByDisplayValue("Ben");
+  session.data = null;
+  view.rerender(<AccountPanel />);
+  expect(screen.queryByLabelText("First name")).toBeNull();
+  expect(
+    screen.getByRole("link", { name: "Sign in or create an account" }),
+  ).toHaveAttribute("href", "/signin?returnTo=%2Fprofile");
 });
 
 it("keeps browsing available while session lookup is pending or unavailable", () => {

@@ -29,7 +29,7 @@ export const signupFields = accountFields.extend({
 export function returnDestination(value: string | null) {
   if (
     !value ||
-    !/^\/(?:$|products\/[1-9]\d*\/?$|cart\/?$|checkout\/?$|orders(?:\/[A-Za-z0-9-]+)?\/?$)/.test(
+    !/^\/(?:$|products\/[1-9]\d*\/?$|profile\/?$|cart\/?$|checkout\/?$|orders(?:\/[A-Za-z0-9-]+)?\/?$)/.test(
       value,
     )
   )

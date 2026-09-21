@@ -77,6 +77,7 @@ it("allows only local known destinations and preserves legacy short signin passw
     "/",
     "/products/12",
     "/cart",
+    "/profile",
     "/checkout",
     "/orders",
     "/orders/abc-12",
