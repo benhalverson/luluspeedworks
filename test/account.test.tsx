@@ -120,7 +120,16 @@ it("uses passkeys independently of password validation and shows cancellation fa
 it("clears browser cart capability on signout and reports signout failure", async () => {
   session.data = { user: { id: "user-1", email: "ben@example.com" } };
   const key = "lulu-cart-v2:https://api.benhalverson.dev";
-  localStorage.setItem(key, JSON.stringify({ cartId: "owned-cart" }));
+  const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      cartId,
+      ownerId: "user-1",
+      pending: false,
+      revision: crypto.randomUUID(),
+    }),
+  );
   vi.mocked(authClient.signOut).mockResolvedValueOnce({
     data: null,
     error: {
@@ -132,7 +141,7 @@ it("clears browser cart capability on signout and reports signout failure", asyn
   renderWithClient(<AccountPanel />);
   fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
   await screen.findByText("Sign-out failed. Please try again.");
-  expect(localStorage.getItem(key)).toContain("owned-cart");
+  expect(localStorage.getItem(key)).toContain(cartId);
   fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
   await waitFor(() => expect(localStorage.getItem(key)).toBeNull());
 });
