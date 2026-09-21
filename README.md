@@ -38,7 +38,7 @@ Runtime TypeScript/TSX coverage includes unimported application files, the entry
 
 Pinned protocol set: `@a2ui/react` **0.11.1**, `@a2ui/web_core` **0.11.0**, Zod **3.25.76**, wire **v0.9.1**. React/React DOM **19.3.0**, TypeScript **7.0.2** and matching Vitest/V8 **5.0.1** were verified against npm's stable tags on 2026-09-20.
 
-The supplied Lulu logo is embedded losslessly in `public/brand/lulu-logo.svg` as a self-contained PNG-backed SVG. Barlow and Barlow Condensed fonts are bundled through Fontsource. See [third-party attribution](THIRD_PARTY_NOTICES.md).
+The supplied Lulu logo is embedded losslessly in `public/brand/lulu-logo.svg` as a self-contained PNG-backed SVG. Barlow and Barlow Condensed fonts are bundled through Fontsource. The combined [third-party licenses and notices](public/THIRD_PARTY_LICENSES.txt) ships with the built site at `/THIRD_PARTY_LICENSES.txt`.
 
 ## Static hosting
 
