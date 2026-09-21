@@ -1,4 +1,8 @@
-import { type A2uiMessage, MessageProcessor } from "@a2ui/web_core/v0_9";
+import {
+  type A2uiClientAction,
+  type A2uiMessage,
+  MessageProcessor,
+} from "@a2ui/web_core/v0_9";
 import type { CatalogSnapshot } from "./api";
 import { componentCatalog } from "./catalog";
 import {
@@ -47,10 +51,12 @@ const prices = new Intl.NumberFormat("en-US", {
   currency: "USD",
 });
 
-export function createCatalogController(onAction: (name: string) => void) {
+export function createCatalogController(
+  onAction: (name: string, context: A2uiClientAction["context"]) => void,
+) {
   const processor = new MessageProcessor(
     [componentCatalog],
-    (action) => onAction(action.name),
+    (action) => onAction(action.name, action.context),
     { version: wireVersion },
   );
   processor.processMessages(structuredClone(initialMessages));
@@ -60,7 +66,13 @@ export function createCatalogController(onAction: (name: string) => void) {
       string,
       | string
       | boolean
-      | { name: string; description: string; image: string; price: string }[]
+      | {
+          name: string;
+          description: string;
+          image: string;
+          price: string;
+          href: string;
+        }[]
     >,
   ) {
     processor.processMessages([
@@ -95,6 +107,7 @@ export function createCatalogController(onAction: (name: string) => void) {
     update({
       ...selection,
       entries: result.entries.map((product) => ({
+        href: `/products/${product.id}`,
         name: product.name,
         description: product.description,
         image: product.image,
@@ -116,6 +129,14 @@ export function createCatalogController(onAction: (name: string) => void) {
 
   return {
     surface: processor.model.getSurface(surfaceId),
+    publishDetail(value: import("./product").DetailView) {
+      processor.processMessages([
+        {
+          version: wireVersion,
+          updateDataModel: { surfaceId, path: "/detail", value },
+        },
+      ]);
+    },
     publish,
     dispose() {
       processor.model.dispose();

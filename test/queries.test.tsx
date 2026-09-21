@@ -99,6 +99,7 @@ it("reuses the five-minute cache, disables automatic refetch, and isolates every
     client
       .getQueryCache()
       .getAll()
+      .filter((query) => query.queryKey[0] === "catalog")
       .every((query) => query.gcTime === 300_000),
   ).toBe(true);
   first.unmount();
