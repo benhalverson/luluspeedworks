@@ -15,6 +15,7 @@ import {
   signupFields,
 } from "./auth";
 import { useCart } from "./cart";
+import { OrdersPanel } from "./orders";
 import { AddPasskey } from "./passkey";
 import { ProfilePanel } from "./profile";
 
@@ -96,6 +97,9 @@ export function AccountPanel() {
           <p>Signed in as {user.email}</p>
           <Link className="underline" to="/profile">
             Shipping profile
+          </Link>
+          <Link className="underline" to="/orders">
+            Your orders
           </Link>
           {bag.claimable ? (
             <Button
@@ -222,6 +226,13 @@ export function AccountPanel() {
         <p role="alert" className="mt-3">
           {message}
         </p>
+      ) : null}
+      {user &&
+      !session.isPending &&
+      !session.error &&
+      (location.pathname === "/orders" ||
+        location.pathname.startsWith("/orders/")) ? (
+        <OrdersPanel key={user.id} userId={user.id} />
       ) : null}
     </section>
   );

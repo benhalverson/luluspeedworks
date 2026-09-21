@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountPanel } from "../src/storefront/account";
 import { authClient, authenticate } from "../src/storefront/auth";
+import { order, orderPage } from "./order-fixtures";
 import { renderWithClient, testClient } from "./query-client";
 
 const session = vi.hoisted(() => ({
@@ -237,3 +238,22 @@ it("keeps browsing available while session lookup is pending or unavailable", ()
     screen.getByRole("link", { name: "Sign in or create an account" }),
   ).toHaveAttribute("href", "/signin?returnTo=%2F");
 });
+
+it.each(["/orders", "/orders/1"])(
+  "removes account orders on session expiry at %s",
+  async (path) => {
+    window.history.replaceState(null, "", path);
+    session.data = { user: { id: "user-1", email: "ben@example.com" } };
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json(path === "/orders" ? orderPage : order),
+    );
+    const view = renderWithClient(<AccountPanel />);
+    await screen.findByText("Order LULU-001");
+    session.data = null;
+    view.rerender(<AccountPanel />);
+    expect(screen.queryByText("Order LULU-001")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Sign in or create an account" }),
+    ).toHaveAttribute("href", `/signin?returnTo=${encodeURIComponent(path)}`);
+  },
+);

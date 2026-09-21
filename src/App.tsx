@@ -8,6 +8,8 @@ import {
   useState,
 } from "react";
 import { Route, Routes, useLocation, useParams } from "react-router";
+import { useShoppingAgent } from "./storefront/agent";
+import { shoppingMessage } from "./storefront/agent-contract";
 import { authClient } from "./storefront/auth";
 import { cartActionSchema, useCart } from "./storefront/cart";
 import { cartView } from "./storefront/cart-view";
@@ -34,6 +36,8 @@ export function App() {
       <Route path="/signin" element={<Storefront />} />
       <Route path="/signup" element={<Storefront />} />
       <Route path="/profile" element={<Storefront />} />
+      <Route path="/orders" element={<Storefront />} />
+      <Route path="/orders/:orderId" element={<Storefront />} />
       <Route path="*" element={<Storefront />} />
     </Routes>
   );
@@ -45,9 +49,11 @@ function Storefront() {
   const { snapshot, status, failed, retry } = useCatalog(origin);
   const { pathname } = useLocation();
   const { productId } = useParams();
-  const id = ["/", "/signin", "/signup", "/profile"].includes(pathname)
-    ? null
-    : parseProductId(productId);
+  const id =
+    ["/", "/signin", "/signup", "/profile", "/orders"].includes(pathname) ||
+    pathname.startsWith("/orders/")
+      ? null
+      : parseProductId(productId);
   const previousPath = useRef(pathname);
   const selected = useProduct(origin, id);
   const session = authClient.useSession();
@@ -83,6 +89,9 @@ function Storefront() {
   const [page, setPage] = useState(1);
   const [controller, setController] =
     useState<ReturnType<typeof createCatalogController>>();
+  const guidance = useShoppingAgent((composition) =>
+    controller?.publishGuidance(composition),
+  );
   const availableColor = verifiedColors?.data.find(
     (color) => color.publicId === config.color,
   );
@@ -97,6 +106,14 @@ function Storefront() {
   );
   const onAction = useEffectEvent(
     (name: string, context: A2uiClientAction["context"]) => {
+      if (name === "shopping-request") {
+        const input = shoppingMessage.safeParse(context);
+        if (input.success) guidance.send(input.data.message);
+        return;
+      }
+      guidance.interrupt();
+      if (name === "cancel-shopping") return;
+      controller?.restoreGuidance();
       if (name === "refresh-bag") {
         bag.mutation.reset();
         void bag.cart.refetch();
@@ -175,6 +192,15 @@ function Storefront() {
   useEffect(() => {
     controller?.publish(snapshot, category, page, status, failed);
   }, [controller, snapshot, category, page, status, failed]);
+  useLayoutEffect(() => {
+    controller?.publishAgent(guidance.status, guidance.busy);
+  }, [controller, guidance.status, guidance.busy]);
+  useLayoutEffect(() => {
+    if (previousPath.current !== pathname) {
+      guidance.interrupt();
+      controller?.restoreGuidance();
+    }
+  }, [pathname, controller, guidance.interrupt]);
   const detail = detailView(id, selected, config);
   useLayoutEffect(() => {
     controller?.publishCart(bagView);
