@@ -167,7 +167,7 @@ it("uses real A2UI bindings for add, quantity changes, removal and explicit refr
       <App />
     </StrictMode>,
   );
-  await screen.findByRole("option", { name: new RegExp(color.publicId) });
+  await screen.findByRole("option", { name: "red — Red PLA" });
   fireEvent.change(screen.getByLabelText("Color"), {
     target: { value: color.publicId },
   });
@@ -190,6 +190,53 @@ it("uses real A2UI bindings for add, quantity changes, removal and explicit refr
   await bag.findByText("Your bag is empty.");
   fireEvent.click(bag.getByRole("button", { name: "Refresh bag" }));
   await ready();
+});
+
+it("passes selected configuration to the cart once without replaying on navigation", async () => {
+  window.history.replaceState(null, "", "/products/1");
+  renderWithClient(<App />);
+  await screen.findByRole("option", { name: "red — Red PLA" });
+  fireEvent.change(screen.getByLabelText("Color"), {
+    target: { value: color.publicId },
+  });
+  fireEvent.change(screen.getByLabelText("Quantity"), {
+    target: { value: "3" },
+  });
+  const add = screen.getByRole("button", { name: /Add to bag/ });
+  await waitFor(() => expect(add).toBeEnabled());
+  fireEvent.click(add);
+  await screen.findByText("$2.29 · Quantity: 3");
+  await ready();
+  const writes = () =>
+    vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST");
+  expect(writes().map(([url]) => new URL(String(url)).pathname)).toEqual([
+    "/cart/create",
+    "/cart/add",
+  ]);
+  const request = writes().find(([url]) => String(url).endsWith("/cart/add"));
+  expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+    cartId,
+    skuNumber: "SKU-101",
+    filamentId: color.publicId,
+    color: "red",
+    filamentType: "PLA",
+    quantity: 3,
+  });
+  const count = writes().length;
+  fireEvent.click(screen.getByRole("link", { name: "Back to Shop all" }));
+  await act(async () => {
+    window.history.back();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+  await screen.findByRole("option", { name: "red — Red PLA" });
+  expect(screen.getByLabelText("Color")).toHaveValue(color.publicId);
+  expect(screen.getByLabelText("Quantity")).toHaveValue(3);
+  await act(async () => {
+    window.history.forward();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+  await screen.findByRole("heading", { level: 1, name: "Your bench awaits." });
+  expect(writes()).toHaveLength(count);
 });
 
 it("renders unavailable lines, maximum quantity, unknown outcome recovery and read/write errors", async () => {
@@ -229,7 +276,7 @@ it("rejects forged cart and stale product actions, including actions delivered w
   window.history.replaceState(null, "", "/products/1");
   const dispatch = vi.spyOn(SurfaceModel.prototype, "dispatchAction");
   renderWithClient(<App />);
-  await screen.findByRole("option", { name: new RegExp(color.publicId) });
+  await screen.findByRole("option", { name: "red — Red PLA" });
   fireEvent.change(screen.getByLabelText("Quantity"), {
     target: { value: "2" },
   });
