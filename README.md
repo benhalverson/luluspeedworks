@@ -46,6 +46,18 @@ Pinned protocol set: `@a2ui/react` **0.11.1**, `@a2ui/web_core` **0.11.0**, Zod 
 
 The supplied Lulu logo is embedded losslessly in `public/brand/lulu-logo.svg` as a self-contained PNG-backed SVG. Barlow and Barlow Condensed fonts are bundled through Fontsource. The combined [third-party licenses and notices](public/THIRD_PARTY_LICENSES.txt) ships with the built site at `/THIRD_PARTY_LICENSES.txt`.
 
+## Password recovery
+
+Choose **Forgot password?** in the password sign-in form, or open `/forgot-password` directly. The standalone recovery pages use Lulu’s branding and do not load the catalog. Both routes support direct visits and refreshes through the static host’s SPA fallback.
+
+The email form uses the configured Better Auth client’s `requestPasswordReset({ email, redirectTo })`. Its callback uses the current storefront origin and `/reset-password`, including a validated `returnTo` destination. Successful requests always show the same confirmation, regardless of whether an account exists. Links expire after one hour under the existing backend configuration; requesting another email requires an explicit action.
+
+The reset page accepts the emailed `token`, validates matching passwords of 8–128 characters without trimming, and calls `resetPassword({ token, newPassword })`. Missing, invalid, expired, or reused links offer a fresh email request. Requests do not retry automatically; network uncertainty does not imply that an email was not sent or a password was not changed.
+
+After a successful reset, the page clears password fields, replaces the URL to remove the token, clears cached queries, and refreshes Better Auth’s session after backend session revocation. Saved bag data remains available to the existing sign-in/restoration flow. Users explicitly choose **Sign in**; resetting a password does not authenticate them. If session refresh fails, the page keeps the successful reset confirmation and explains that a reload is needed.
+
+Credentials and reset tokens remain outside A2UI, browser storage, mutation variables, and onward navigation destinations. The frontend adds no backend endpoints or dependencies. Automated SDK and browser checks use mocked auth responses; production deployment and a live email/reset test with a controlled account are separate verification steps.
+
 ## Static hosting
 
 This adapts the [Cloudflare React/Vite starter](https://github.com/cloudflare/templates/tree/main/vite-react-template) for [Workers static assets](https://developers.cloudflare.com/workers/static-assets/get-started/): keep the React/Vite browser build, remove the example API/Hono Worker, and use an assets-only `wrangler.jsonc`. No custom request handler or Cloudflare Vite Worker environment is necessary. The asset directory is `dist`, with SPA fallback. Unknown document URLs show the scaffold; product routes are not implemented yet.

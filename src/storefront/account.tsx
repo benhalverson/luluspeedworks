@@ -165,6 +165,14 @@ export function AccountPanel() {
             <p id="password-error" role="alert">
               {errors.password?.message}
             </p>
+            {mode === "signin" ? (
+              <Link
+                className="underline"
+                to={`/forgot-password?returnTo=${encodeURIComponent(destination)}`}
+              >
+                Forgot password?
+              </Link>
+            ) : null}
             <Button type="submit" disabled={pending}>
               {mode === "signup" ? "Create account" : "Sign in with password"}
             </Button>
