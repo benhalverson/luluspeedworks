@@ -10,6 +10,10 @@ export function cartView(state: ReturnType<typeof useCart>, canAdd: boolean) {
   const disabled = busy || uncertain || !cart.isSuccess;
   const data = cart.isSuccess ? cart.data : undefined;
   return {
+    count: (data?.items ?? []).reduce(
+      (total, line) => total + line.quantity,
+      0,
+    ),
     busy,
     uncertain,
     addDisabled: disabled || !canAdd,
@@ -23,9 +27,7 @@ export function cartView(state: ReturnType<typeof useCart>, canAdd: boolean) {
             : data?.items.length
               ? "Bag updated."
               : "Your bag is empty.")),
-    total: data
-      ? `Item subtotal: ${money.format(data.total)}. Shipping calculated at checkout.`
-      : "",
+    total: data ? money.format(data.total) : "",
     lines: (data?.items ?? []).map((line) => ({
       itemId: line.id,
       name: line.name ?? `Unavailable item (${line.productId})`,

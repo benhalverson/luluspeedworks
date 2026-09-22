@@ -85,16 +85,16 @@ export function AccountPanel() {
     logout.error?.message ??
     bag.mutation.error?.message;
   return (
-    <section
-      aria-label="Account"
-      className="col-span-full rounded border border-border p-5"
-    >
+    <section aria-label="Account" className="min-w-0">
       {session.isPending ? (
         <p role="status">Checking your session…</p>
       ) : user ? (
         <div className="flex flex-wrap items-center gap-3">
           <p>Signed in as {user.email}</p>
-          <Link className="underline" to="/profile">
+          <Link
+            className="underline"
+            to={`/profile?returnTo=${encodeURIComponent(destination)}`}
+          >
             Shipping profile
           </Link>
           {bag.claimable ? (
@@ -214,8 +214,11 @@ export function AccountPanel() {
       !session.error &&
       location.pathname === "/profile" ? (
         <div key={user.id}>
-          <AddPasskey />
           <ProfilePanel userId={user.id} />
+          <div className="mt-6 border-t border-border pt-5">
+            <h2 className="font-display text-2xl">Account security</h2>
+            <AddPasskey />
+          </div>
         </div>
       ) : null}
       {message ? (
