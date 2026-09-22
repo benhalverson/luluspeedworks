@@ -112,11 +112,11 @@ function ProfileForm({ profile }: { profile: Profile }) {
   return (
     <form
       aria-label="Shipping profile"
-      className="mt-5 grid max-w-lg gap-3"
+      className="mt-5 grid gap-3 tablet:grid-cols-2"
       onSubmit={handleSubmit((values) => save.mutate(values))}
     >
-      <h2 className="font-display text-2xl">Shipping profile</h2>
-      <p className="text-sm">
+      <h2 className="col-span-full font-display text-2xl">Shipping profile</h2>
+      <p className="col-span-full text-sm text-muted-foreground">
         Save the contact and shipping details you will review at checkout.
       </p>
       {fields.map((field) => (
@@ -134,7 +134,11 @@ function ProfileForm({ profile }: { profile: Profile }) {
           </p>
         </div>
       ))}
-      <Button disabled={save.isPending} type="submit">
+      <Button
+        className="col-span-full mt-2"
+        disabled={save.isPending}
+        type="submit"
+      >
         Save profile
       </Button>
       {save.isSuccess ? <p role="status">Profile saved.</p> : null}

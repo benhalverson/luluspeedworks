@@ -1,11 +1,33 @@
 import { createComponentImplementation } from "@a2ui/react/v0_9";
 import { Catalog, CommonSchemas, componentId } from "@a2ui/web_core/v0_9";
+import * as Dialog from "@radix-ui/react-dialog";
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
+import { DialogContent } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { AccountPanel } from "./account";
+import { authClient, returnDestination } from "./auth";
+
+function AccountDialog() {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  return (
+    <Dialog.Root
+      open={["/signin", "/signup", "/profile"].includes(pathname)}
+      onOpenChange={() => navigate(returnDestination(params.get("returnTo")))}
+    >
+      <DialogContent
+        title="Your account"
+        description="Manage your sign-in and shipping details."
+      >
+        <AccountPanel />
+      </DialogContent>
+    </Dialog.Root>
+  );
+}
 
 /**
  * Converts A2UI child references to arguments for `buildChild(id, basePath)`.
@@ -31,77 +53,99 @@ const PitBench = createComponentImplementation(
     }),
   },
   ({ props, buildChild }) => (
-    <div className="mx-auto min-h-dvh max-w-[1550px] px-4.5 tablet:px-[4%]">
-      <a
-        className="absolute -top-25 left-4 z-10 bg-primary p-3 text-primary-foreground focus:top-3"
-        href="#bench"
-      >
-        Skip to the bench
-      </a>
-      {buildChild(props.header)}
-      <main id="bench" tabIndex={-1}>
-        <AccountPanel />
-        <div className="flex items-center justify-between gap-3 py-5.5 tablet:gap-0 tablet:py-6.5">
-          <p className="text-[11px] font-semibold leading-normal tracking-[0.14em]">
-            THE PIT BENCH
-          </p>
-          <span className="text-[10px] text-muted-foreground tablet:text-[12px]">
-            RC parts &amp; pit tools
+    <Dialog.Root>
+      <div className="mx-auto min-h-dvh max-w-[1550px] px-4.5 tablet:px-[4%]">
+        <a
+          className="absolute -top-25 left-4 z-10 bg-primary p-3 text-primary-foreground focus:top-3"
+          href="#bench"
+        >
+          Skip to the bench
+        </a>
+        {buildChild(props.header)}
+        <main id="bench" tabIndex={-1}>
+          <div className="flex items-center justify-between gap-3 py-5.5 tablet:gap-0 tablet:py-6.5">
+            <p className="text-[11px] font-semibold leading-normal tracking-[0.14em]">
+              THE PIT BENCH
+            </p>
+            <span className="text-[10px] text-muted-foreground tablet:text-[12px]">
+              RC parts &amp; pit tools
+            </span>
+          </div>
+          <div className="flex flex-col gap-6 tablet:grid tablet:grid-cols-[minmax(0,1fr)_250px] tablet:gap-5 bench:grid-cols-[180px_minmax(0,1fr)_230px] wide:grid-cols-[235px_minmax(0,1fr)_270px] wide:gap-7.5 [&>*]:min-w-0">
+            {buildChild(props.products)}
+            {buildChild(props.focus)}
+            {buildChild(props.configuration)}
+            {buildChild(props.composer)}
+          </div>
+        </main>
+        {buildChild(props.cart)}
+        <AccountDialog />
+        <footer className="mt-9 flex flex-col items-start justify-between gap-2 border-t border-border pt-6 pb-7.5 tablet:flex-row tablet:items-center tablet:gap-5">
+          <span className="font-display text-[18px] font-semibold tracking-[0.05em]">
+            LULU SPEEDWORKS
           </span>
-        </div>
-        <div className="flex flex-col gap-6 tablet:grid tablet:grid-cols-[minmax(0,1fr)_250px] tablet:gap-5 bench:grid-cols-[180px_minmax(0,1fr)_230px] wide:grid-cols-[235px_minmax(0,1fr)_270px] wide:gap-7.5 [&>*]:min-w-0">
-          {buildChild(props.products)}
-          {buildChild(props.focus)}
-          {buildChild(props.configuration)}
-          {buildChild(props.composer)}
-          {buildChild(props.cart)}
-        </div>
-      </main>
-      <footer className="mt-9 flex flex-col items-start justify-between gap-2 border-t border-border pt-6 pb-7.5 tablet:flex-row tablet:items-center tablet:gap-5">
-        <span className="font-display text-[18px] font-semibold tracking-[0.05em]">
-          LULU SPEEDWORKS
-        </span>
-        <p className="text-[12px] text-muted-foreground">
-          A little more order. A little more race day.
-        </p>
-      </footer>
-    </div>
+          <p className="text-[12px] text-muted-foreground">
+            A little more order. A little more race day.
+          </p>
+        </footer>
+      </div>
+    </Dialog.Root>
   ),
 );
 
 const BrandHeader = createComponentImplementation(
-  { name: "BrandHeader", schema: z.object({}) },
-  () => (
-    <header className="flex min-h-22 items-center gap-3 border-b border-border tablet:min-h-26 tablet:gap-4.5 wide:gap-8">
-      <Link
-        className="flex shrink-0 items-center gap-3"
-        to="/"
-        aria-label="Lulu Speedworks home"
-      >
-        <span className="relative h-13 w-11 overflow-hidden rounded-full bg-white tablet:h-18.5 tablet:w-16">
-          <img
-            className="absolute -top-3.25 -left-1.75 h-auto w-14.75 max-w-none tablet:-top-4.25 tablet:w-19.5"
-            src="/brand/lulu-logo.svg"
-            alt="Lulu the dog with a racing badge"
-            width="78"
-            height="117"
-          />
-        </span>
-        <span className="-skew-x-7 font-display text-[29px] font-bold leading-[0.8] tablet:text-[36px]">
-          LULU
-          <span className="mt-1.75 block text-[10px] tracking-[0.12em] tablet:text-[12px]">
-            SPEEDWORKS
+  {
+    name: "BrandHeader",
+    schema: z.object({ count: CommonSchemas.DynamicNumber }),
+  },
+  ({ props }) => {
+    const location = useLocation();
+    const session = authClient.useSession();
+    return (
+      <header className="flex min-h-22 items-center gap-3 border-b border-border tablet:min-h-26 tablet:gap-4.5 wide:gap-8">
+        <Link
+          className="flex shrink-0 items-center gap-3"
+          to="/"
+          aria-label="Lulu Speedworks home"
+        >
+          <span className="relative h-13 w-11 overflow-hidden rounded-full bg-white tablet:h-18.5 tablet:w-16">
+            <img
+              className="absolute -top-3.25 -left-1.75 h-auto w-14.75 max-w-none tablet:-top-4.25 tablet:w-19.5"
+              src="/brand/lulu-logo.svg"
+              alt="Lulu the dog with a racing badge"
+              width="78"
+              height="117"
+            />
           </span>
-        </span>
-      </Link>
-      <a
-        className="ml-auto rounded border border-border px-4 py-2 focus-visible:outline-2 focus-visible:outline-ring"
-        href="#bag"
-      >
-        Bag
-      </a>
-    </header>
-  ),
+          <span className="-skew-x-7 font-display text-[29px] font-bold leading-[0.8] tablet:text-[36px]">
+            LULU
+            <span className="mt-1.75 block text-[10px] tracking-[0.12em] tablet:text-[12px]">
+              SPEEDWORKS
+            </span>
+          </span>
+        </Link>
+        <nav
+          aria-label="Account and bag"
+          className="ml-auto flex items-center gap-2"
+        >
+          <Link
+            className="rounded px-3 py-2 text-sm"
+            to={`${session.data?.user ? "/profile" : "/signin"}?returnTo=${encodeURIComponent(location.pathname)}`}
+          >
+            Account
+          </Link>
+          <Dialog.Trigger asChild>
+            <Button variant="outline" aria-label={`Bag (${props.count})`}>
+              Bag{" "}
+              <span className="rounded bg-primary px-1.5 text-xs text-primary-foreground">
+                {props.count}
+              </span>
+            </Button>
+          </Dialog.Trigger>
+        </nav>
+      </header>
+    );
+  },
 );
 
 const ProductRail = createComponentImplementation(
@@ -368,6 +412,7 @@ const Configuration = createComponentImplementation(
       quantityError: CommonSchemas.DynamicString,
       addDisabled: CommonSchemas.DynamicBoolean,
       colorStatus: CommonSchemas.DynamicString,
+      bagStatus: CommonSchemas.DynamicString,
       retryVisible: CommonSchemas.DynamicBoolean,
       retry: CommonSchemas.Action,
     }),
@@ -470,6 +515,18 @@ const Configuration = createComponentImplementation(
       <p className="text-center text-[11px] leading-[1.6] text-muted-foreground">
         Review your bag before checkout.
       </p>
+      <p
+        role="status"
+        aria-label="Bag update"
+        className="mt-3 text-center text-xs text-muted-foreground"
+      >
+        {props.bagStatus}
+      </p>
+      <Dialog.Trigger asChild>
+        <Button variant="outline" className="mt-3 w-full">
+          View your bag ↗
+        </Button>
+      </Dialog.Trigger>
     </section>
   ),
 );
@@ -548,50 +605,71 @@ const CartPanel = createComponentImplementation(
     }),
   },
   ({ props, buildChild, context }) => (
-    <section
-      id="bag"
-      tabIndex={-1}
-      aria-labelledby="bag-title"
-      className="col-span-full rounded border border-border p-5 [overflow-wrap:anywhere]"
+    <DialogContent
+      title="Your bag"
+      description="Your selected parts, ready for a final check."
     >
-      <h2 id="bag-title" className="font-display text-2xl">
-        Your bag
-      </h2>
-      <p role="status" aria-label="Bag status" className="my-3 text-sm">
-        {props.status}
-      </p>
-      <ul className="space-y-4">
-        {props.lines.map((child) => buildChild(...childReference(child)))}
-      </ul>
-      <p className="my-4">{props.total}</p>
-      <Button
-        variant="outline"
-        disabled={props.busy}
-        onClick={() =>
-          void context.dispatchAction({ event: { name: "refresh-bag" } })
-        }
-      >
-        Refresh bag
-      </Button>
-      {props.uncertain ? (
-        <div className="mt-3">
-          <p className="mb-2 text-sm">
-            The last change may still complete. Refresh and check the quantities
-            before making another change.
-          </p>
-          <Button
-            disabled={props.busy}
-            onClick={() =>
-              void context.dispatchAction({
-                event: { name: "acknowledge-bag" },
-              })
-            }
-          >
-            I checked my bag
-          </Button>
-        </div>
-      ) : null}
-    </section>
+      <section id="bag" tabIndex={-1} aria-label="Your bag">
+        <p role="status" aria-label="Bag status" className="my-3 text-sm">
+          {props.status}
+        </p>
+        {props.status === "Your bag is empty." ? (
+          <div className="px-4 py-7 text-center">
+            <h3 className="font-display text-[27px] font-semibold">
+              Your bag is ready for a project.
+            </h3>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Explore RC parts and pit tools to get started.
+            </p>
+          </div>
+        ) : null}
+        <ul className="space-y-4">
+          {props.lines.map((child) => buildChild(...childReference(child)))}
+        </ul>
+        <dl className="my-5 space-y-3 border-t border-border pt-5">
+          <div className="flex items-center justify-between gap-4">
+            <dt>Subtotal</dt>
+            <dd className="font-display text-2xl font-semibold">
+              {props.total}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 text-sm text-muted-foreground">
+            <dt>Shipping</dt>
+            <dd className="text-right">Calculated at checkout</dd>
+          </div>
+        </dl>
+        <Button
+          variant="outline"
+          disabled={props.busy}
+          onClick={() =>
+            void context.dispatchAction({ event: { name: "refresh-bag" } })
+          }
+        >
+          Refresh bag
+        </Button>
+        {props.uncertain ? (
+          <div className="mt-3">
+            <p className="mb-2 text-sm">
+              The last change may still complete. Refresh and check the
+              quantities before making another change.
+            </p>
+            <Button
+              disabled={props.busy}
+              onClick={() =>
+                void context.dispatchAction({
+                  event: { name: "acknowledge-bag" },
+                })
+              }
+            >
+              I checked my bag
+            </Button>
+          </div>
+        ) : null}
+        <Dialog.Close asChild>
+          <Button className="mt-5 w-full">Continue shopping</Button>
+        </Dialog.Close>
+      </section>
+    </DialogContent>
   ),
 );
 const CartLine = createComponentImplementation(

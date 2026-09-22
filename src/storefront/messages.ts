@@ -39,6 +39,7 @@ export const initialMessages: A2uiMessage[] = [
         rail: loadingRail,
         detail: emptyDetail,
         cart: {
+          count: 0,
           lines: [],
           status: "Loading bag…",
           total: "",
@@ -64,7 +65,11 @@ export const initialMessages: A2uiMessage[] = [
           composer: "composer",
           cart: "bag",
         },
-        { id: "header", component: "BrandHeader" },
+        {
+          id: "header",
+          component: "BrandHeader",
+          count: { path: "/cart/count" },
+        },
         {
           id: "products",
           component: "ProductRail",
@@ -136,6 +141,7 @@ export const initialMessages: A2uiMessage[] = [
           quantityError: { path: "/detail/quantityError" },
           addDisabled: { path: "/cart/addDisabled" },
           colorStatus: { path: "/detail/colorStatus" },
+          bagStatus: { path: "/cart/status" },
           retryVisible: { path: "/detail/colorsRetry" },
           retry: { event: { name: "retry-colors" } },
         },

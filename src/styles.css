@@ -16,6 +16,10 @@
   --color-watermark: #48563d;
   --color-marker: #708064;
   --color-input: #566048;
+  --color-dialog: #fffdf7;
+  --color-dialog-foreground: #23271f;
+  --color-dialog-muted: #747869;
+  --color-dialog-border: #e1dfd4;
   --breakpoint-tablet: 37.5625rem;
   --breakpoint-bench: 53.1875rem;
   --breakpoint-wide: 65.6875rem;

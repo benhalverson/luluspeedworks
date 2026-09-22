@@ -19,10 +19,13 @@ const session = vi.hoisted(() => ({
   error: null as Error | null,
   refetch: vi.fn(),
 }));
-vi.mock("../src/storefront/auth", async (original) => ({
-  ...(await original<typeof import("../src/storefront/auth")>()),
-  authClient: { useSession: () => session },
-}));
+vi.mock("../src/storefront/auth", async (original) => {
+  const actual = await original<typeof import("../src/storefront/auth")>();
+  return {
+    ...actual,
+    authClient: { $fetch: actual.authClient.$fetch, useSession: () => session },
+  };
+});
 
 const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
 const color = {
@@ -64,6 +67,19 @@ beforeEach(() => {
   vi.mocked(fetch).mockImplementation(async (url, init) => {
     const path = new URL(String(url)).pathname;
     if (path === "/api/auth/get-session") return Response.json(null);
+    if (path === "/profile")
+      return Response.json({
+        id: "alice",
+        email: "alice@example.com",
+        firstName: "Alice",
+        lastName: "Driver",
+        address: "123 Example Avenue",
+        city: "Portland",
+        state: "OR",
+        zipCode: "97201",
+        country: "US",
+        phone: "5035550100",
+      });
     if (path === "/categories") return Response.json(categories);
     if (path === "/products") return Response.json(apiPage([1]));
     if (path === "/product/1")
@@ -119,6 +135,38 @@ async function ready() {
   );
 }
 
+it("keeps account and bag out of the bench and opens them in prototype dialogs", async () => {
+  session.data = { user: { id: "alice", email: "alice@example.com" } };
+  window.history.replaceState(null, "", "/products/1");
+  renderWithClient(<App />);
+  await screen.findByRole("option", { name: "red — Red PLA" });
+  fireEvent.change(screen.getByLabelText("Color"), {
+    target: { value: color.publicId },
+  });
+  expect(screen.queryByRole("region", { name: "Account" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Your bag" })).toBeNull();
+  fireEvent.click(screen.getByRole("link", { name: "Account" }));
+  await screen.findByRole("region", { name: "Account" });
+  expect(location.pathname).toBe("/profile");
+  expect(screen.getByRole("dialog", { name: "Your account" })).toBeVisible();
+  const account = within(screen.getByRole("dialog", { name: "Your account" }));
+  expect(await account.findByLabelText("First name")).toHaveValue("Alice");
+  expect(account.getByRole("form", { name: "Shipping profile" })).toBeVisible();
+  expect(
+    within(screen.getByRole("dialog")).queryByText("THE PARTS DRAWER"),
+  ).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.getByRole("region", { name: "MAKE IT YOURS" })).toBeVisible();
+  expect(screen.getByLabelText("Color")).toHaveValue(color.publicId);
+  fireEvent.click(screen.getByRole("button", { name: "Bag (0)" }));
+  await screen.findByRole("region", { name: "Your bag" });
+  expect(screen.getByRole("dialog", { name: "Your bag" })).toBeVisible();
+  expect(location.pathname).toBe("/products/1");
+  expect(screen.queryByRole("region", { name: "Account" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Continue shopping" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
 it("removes private bag lines while a session is rechecking or changes account", async () => {
   session.data = { user: { id: "alice", email: "alice@example.com" } };
   localStorage.setItem(
@@ -132,6 +180,7 @@ it("removes private bag lines while a session is rechecking or changes account",
   );
   server = { items: [line], total: 2.29 };
   const view = renderWithClient(<App />);
+  fireEvent.click(screen.getByRole("button", { name: /^Bag \(/ }));
   await waitFor(() =>
     expect(screen.getByRole("region", { name: "Your bag" })).toHaveTextContent(
       "SKU-101",
@@ -174,10 +223,9 @@ it("uses real A2UI bindings for add, quantity changes, removal and explicit refr
   const add = screen.getByRole("button", { name: /Add to bag/ });
   await waitFor(() => expect(add).toBeEnabled());
   fireEvent.click(add);
+  fireEvent.click(screen.getByRole("button", { name: /View your bag/ }));
   const bag = within(screen.getByRole("region", { name: "Your bag" }));
-  await bag.findByText(
-    "Item subtotal: $2.29. Shipping calculated at checkout.",
-  );
+  await bag.findByText("$2.29");
   await ready();
   expect(bag.getByRole("button", { name: /Decrease/ })).toBeDisabled();
   fireEvent.click(bag.getByRole("button", { name: /Increase/ }));
@@ -205,6 +253,7 @@ it("passes selected configuration to the cart once without replaying on navigati
   const add = screen.getByRole("button", { name: /Add to bag/ });
   await waitFor(() => expect(add).toBeEnabled());
   fireEvent.click(add);
+  fireEvent.click(screen.getByRole("button", { name: /View your bag/ }));
   await screen.findByText("$2.29 · Quantity: 3");
   await ready();
   const writes = () =>
@@ -223,6 +272,7 @@ it("passes selected configuration to the cart once without replaying on navigati
     quantity: 3,
   });
   const count = writes().length;
+  fireEvent.click(screen.getByRole("button", { name: "Continue shopping" }));
   fireEvent.click(screen.getByRole("link", { name: "Back to Shop all" }));
   await act(async () => {
     window.history.back();
@@ -250,23 +300,30 @@ it("renders unavailable lines, maximum quantity, unknown outcome recovery and re
   };
   save(true);
   renderWithClient(<App />);
-  await screen.findByText("A previous change has an unknown outcome.");
+  fireEvent.click(screen.getByRole("button", { name: /^Bag \(/ }));
+  await screen.findByRole("status", { name: "Bag status" });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("status", { name: "Bag status" }),
+    ).toHaveTextContent("A previous change has an unknown outcome."),
+  );
   expect(screen.getByText("Unavailable item (SKU-101)")).toBeVisible();
   await ready();
   fireEvent.click(screen.getByRole("button", { name: "I checked my bag" }));
-  await screen.findByText("Bag updated.");
+  const dialog = within(screen.getByRole("dialog", { name: "Your bag" }));
+  await dialog.findByText("Bag updated.");
   const increases = screen.getAllByRole("button", { name: /Increase/ });
   for (const button of increases) expect(button).toBeDisabled();
   failWrite = true;
   const remove = screen.getAllByRole("button", { name: /Remove/ })[0];
   if (!remove) throw Error("Expected a remove button");
   fireEvent.click(remove);
-  await screen.findByText("Connection lost");
+  await dialog.findByText("Connection lost");
   fireEvent.click(screen.getByRole("button", { name: "Refresh bag" }));
-  await screen.findByText("A previous change has an unknown outcome.");
+  await dialog.findByText("A previous change has an unknown outcome.");
   failRead = true;
   refreshFromAnotherTab();
-  await screen.findByText(
+  await dialog.findByText(
     "Bag unavailable. Refresh to recover your saved bag.",
   );
   expect(screen.queryByText("Unavailable item (SKU-101)")).toBeNull();
@@ -283,6 +340,7 @@ it("rejects forged cart and stale product actions, including actions delivered w
   const surface = dispatch.mock.instances[0];
   if (!(surface instanceof SurfaceModel)) throw Error("Expected A2UI surface");
   const activeSurface = surface;
+  fireEvent.click(screen.getByRole("button", { name: /^Bag \(/ }));
   async function send(
     name: string,
     context: Record<string, string | number> = {},

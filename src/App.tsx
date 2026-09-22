@@ -7,8 +7,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { Route, Routes, useLocation, useParams } from "react-router";
-import { authClient } from "./storefront/auth";
+import { matchPath, Route, Routes, useLocation } from "react-router";
+import { authClient, returnDestination } from "./storefront/auth";
 import { cartActionSchema, useCart } from "./storefront/cart";
 import { cartView } from "./storefront/cart-view";
 import {
@@ -43,9 +43,13 @@ function Storefront() {
   const origin =
     import.meta.env.VITE_API_ORIGIN || "https://api.benhalverson.dev";
   const { snapshot, status, failed, retry } = useCatalog(origin);
-  const { pathname } = useLocation();
-  const { productId } = useParams();
-  const id = ["/", "/signin", "/signup", "/profile"].includes(pathname)
+  const { pathname, search } = useLocation();
+  const benchPath = ["/signin", "/signup", "/profile"].includes(pathname)
+    ? returnDestination(new URLSearchParams(search).get("returnTo"))
+    : pathname;
+  const productId = matchPath("/products/:productId", benchPath)?.params
+    .productId;
+  const id = ["/", "/signin", "/signup", "/profile"].includes(benchPath)
     ? null
     : parseProductId(productId);
   const previousPath = useRef(pathname);
