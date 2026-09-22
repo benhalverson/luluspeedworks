@@ -100,9 +100,11 @@ export function AccountPanel() {
           {bag.claimable ? (
             <Button
               disabled={pending}
-              onClick={() =>
-                bag.mutation.mutate({ kind: "claim", userId: user.id })
-              }
+              onClick={() => {
+                login.reset();
+                logout.reset();
+                bag.mutation.mutate({ kind: "claim", userId: user.id });
+              }}
             >
               Restore this bag
             </Button>
@@ -224,6 +226,11 @@ export function AccountPanel() {
       {message ? (
         <p role="alert" className="mt-3">
           {message}
+        </p>
+      ) : null}
+      {bag.mutation.isSuccess ? (
+        <p role="status" className="mt-3">
+          Your bag is restored.
         </p>
       ) : null}
     </section>

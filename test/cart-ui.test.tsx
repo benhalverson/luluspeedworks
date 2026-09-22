@@ -93,6 +93,8 @@ beforeEach(() => {
       return Response.json({ success: true, data: [color] });
     if (path === "/cart/create")
       return Response.json({ cartId, guestToken: cartId });
+    if (path === `/cart/${cartId}/claim`)
+      return Response.json({ message: "Cart claimed" });
     if (init?.method === "GET")
       return failRead
         ? Response.json({}, { status: 403 })
@@ -121,6 +123,41 @@ function save(pending = false) {
     }),
   );
 }
+
+it("refreshes the shared bag after restoring a guest cart from the account dialog", async () => {
+  session.data = { user: { id: "alice", email: "alice@example.com" } };
+  window.history.replaceState(null, "", "/profile");
+  server = { items: [line], total: 2.29 };
+  save();
+  renderWithClient(<App />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Restore this bag" }),
+  );
+  await screen.findByText("Your bag is restored.");
+  expect(screen.queryByRole("button", { name: "Restore this bag" })).toBeNull();
+  await waitFor(() => {
+    const reads = vi
+      .mocked(fetch)
+      .mock.calls.filter(
+        ([url, init]) =>
+          String(url).endsWith(`/cart/${cartId}`) && init?.method === "GET",
+      );
+    expect(reads.length).toBeGreaterThan(0);
+    expect(new Headers(reads.at(-1)?.[1]?.headers).has("X-Cart-Token")).toBe(
+      false,
+    );
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Bag (1)" }));
+  expect(
+    await within(screen.getByRole("dialog", { name: "Your bag" })).findByText(
+      "$2.29",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Increase Part 1 quantity" }),
+  ).toBeEnabled();
+});
 function refreshFromAnotherTab(pending = false) {
   act(() => {
     save(pending);
