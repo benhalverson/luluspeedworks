@@ -60,7 +60,7 @@ function enter(path: string) {
   });
 }
 async function ready() {
-  await screen.findByRole("option", { name: new RegExp(red.publicId) });
+  await screen.findAllByRole("option", { name: "red — PLA red" });
 }
 
 it("loads a direct URL independently, renders authoritative safe detail and UUID options through A2UI actions", async () => {
@@ -89,8 +89,18 @@ it("loads a direct URL independently, renders authoritative safe detail and UUID
     screen.getByText("Fits the supplied test chassis only."),
   ).toBeVisible();
   const color = screen.getByLabelText("Color");
+  const options = screen.getAllByRole("option", { name: "red — PLA red" });
+  expect(options).toHaveLength(2);
+  expect(options.map((option) => option.getAttribute("value"))).toEqual([
+    red.publicId,
+    otherRed.publicId,
+  ]);
+  expect(color).not.toHaveTextContent(red.publicId);
+  expect(color).not.toHaveTextContent(otherRed.publicId);
   expect(color).toHaveValue("");
   expect(screen.getByLabelText("Quantity")).toHaveValue(1);
+  fireEvent.change(color, { target: { value: red.publicId } });
+  await waitFor(() => expect(color).toHaveValue(red.publicId));
   fireEvent.change(color, { target: { value: otherRed.publicId } });
   await waitFor(() => expect(color).toHaveValue(otherRed.publicId));
   fireEvent.change(color, { target: { value: "" } });
@@ -175,7 +185,7 @@ it("uses native links, remembers each product, revalidates entry, and resets on 
   ).toBeVisible();
   view.unmount();
   render(<App />);
-  await screen.findByRole("option", { name: new RegExp(otherRed.publicId) });
+  await ready();
   expect(screen.getByLabelText("Quantity")).toHaveValue(1);
   expect(
     screen.queryByText(
@@ -388,12 +398,13 @@ it("cancels obsolete color requests and cannot apply their late UUIDs to another
     colors: async () => Response.json({ success: true, data: [petg] }),
   });
   enter("/products/2");
-  await screen.findByRole("option", { name: new RegExp(otherRed.publicId) });
+  const option = await screen.findByRole("option", { name: "red — PLA red" });
+  expect(option).toHaveValue(otherRed.publicId);
   expect(signal?.aborted).toBe(true);
   await act(async () => finish(Response.json({ success: true, data: [red] })));
   expect(
-    screen.queryByRole("option", { name: new RegExp(red.publicId) }),
-  ).toBeNull();
+    screen.getAllByRole("option").map((item) => item.getAttribute("value")),
+  ).not.toContain(red.publicId);
   expect(screen.getByText("Material: PETG")).toBeVisible();
   expect(screen.getByLabelText("Color")).toHaveValue("");
 });

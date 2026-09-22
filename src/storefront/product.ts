@@ -136,7 +136,7 @@ export function detailView(
       .map((src) => ({ src, name: data.name })),
     colors: options.map((option) => ({
       value: option.publicId,
-      label: `${option.color} — ${option.name} (${option.publicId})`,
+      label: `${option.color} — ${option.name}`,
     })),
     colorsReady: colors.isSuccess && !colors.isFetching,
     colorsRetry: colors.isError,
