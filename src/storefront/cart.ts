@@ -156,7 +156,12 @@ export function useCart(
         | { kind: "acknowledge" }
         | { kind: "claim"; userId: string },
     ) => {
-      if (!ready) throw new Error("Wait for your session to finish loading.");
+      // Login has already verified its session before requesting a claim. The
+      // reactive session hook can still be refreshing at that point; the claim
+      // endpoint validates the session cookie and guest capability itself.
+      // Reads and item edits remain gated on the reactive session state.
+      if (!ready && input.kind !== "claim")
+        throw new Error("Wait for your session to finish loading.");
       if (input.kind === "claim" && !readSaved(input.userId)?.guestToken)
         return empty;
       if (!navigator.locks)

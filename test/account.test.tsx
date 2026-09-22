@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountPanel } from "../src/storefront/account";
 import { authClient, authenticate } from "../src/storefront/auth";
@@ -104,6 +104,116 @@ it("preserves the guest cart on login and clears private query data", async () =
     JSON.parse(localStorage.getItem(key) ?? "null").guestToken,
   ).toBeUndefined();
   expect(client.getQueryData(["orders"])).toBeUndefined();
+});
+
+it("clears the failed login message when restoring the guest bag succeeds", async () => {
+  window.history.replaceState(null, "", "/signin");
+  const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
+  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      cartId,
+      guestToken: cartId,
+      ownerId: null,
+      pending: false,
+      revision: crypto.randomUUID(),
+    }),
+  );
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (_key: string, callback: () => Promise<unknown>) =>
+        callback(),
+    },
+  });
+  vi.mocked(fetch).mockImplementation(async (url) =>
+    String(url).endsWith("/claim")
+      ? Response.json({ message: "Cart claimed" })
+      : Response.json({ items: [], total: 0 }),
+  );
+  vi.mocked(authenticate).mockRejectedValueOnce(
+    Error("Wait for your session to finish loading."),
+  );
+  const view = renderWithClient(<AccountPanel />);
+  await fill();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in with password" }),
+  );
+  await screen.findByText("Wait for your session to finish loading.");
+  session.data = { user: { id: "user-1", email: "ben@example.com" } };
+  view.rerender(<AccountPanel />);
+  fireEvent.click(screen.getByRole("button", { name: "Restore this bag" }));
+  await waitFor(() =>
+    expect(
+      JSON.parse(localStorage.getItem(key) ?? "null").guestToken,
+    ).toBeUndefined(),
+  );
+  expect(
+    screen.queryByText("Wait for your session to finish loading."),
+  ).toBeNull();
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Your bag is restored.",
+  );
+});
+
+it("claims the guest bag after verified login even while the session hook refreshes", async () => {
+  window.history.replaceState(null, "", "/signin?returnTo=%2Fproducts%2F1");
+  const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
+  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      cartId,
+      guestToken: cartId,
+      ownerId: null,
+      pending: false,
+      revision: crypto.randomUUID(),
+    }),
+  );
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (_key: string, callback: () => Promise<unknown>) =>
+        callback(),
+    },
+  });
+  vi.mocked(fetch).mockImplementation(async (url) =>
+    String(url).endsWith("/claim")
+      ? Response.json({ message: "Cart claimed" })
+      : Response.json({ items: [], total: 0 }),
+  );
+  let completeLogin = () => {};
+  const login = new Promise<Awaited<ReturnType<typeof authenticate>>>(
+    (resolve) => {
+      completeLogin = () =>
+        resolve({
+          id: "user-1",
+          email: "ben@example.com",
+          name: "Ben",
+          emailVerified: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+    },
+  );
+  vi.mocked(authenticate).mockReturnValueOnce(login);
+  const view = renderWithClient(<AccountPanel />);
+  await fill();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in with password" }),
+  );
+  await waitFor(() => expect(authenticate).toHaveBeenCalled());
+  session.isPending = true;
+  view.rerender(<AccountPanel />);
+  await act(async () => completeLogin());
+  await waitFor(() => expect(location.pathname).toBe("/products/1"));
+  expect(JSON.parse(localStorage.getItem(key) ?? "null")).toMatchObject({
+    ownerId: "user-1",
+  });
+  expect(
+    JSON.parse(localStorage.getItem(key) ?? "null").guestToken,
+  ).toBeUndefined();
 });
 it("uses passkeys independently of password validation and shows cancellation failures", async () => {
   window.history.replaceState(null, "", "/signin");
