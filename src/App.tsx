@@ -25,10 +25,19 @@ import {
   useProduct,
 } from "./storefront/product";
 import { useCatalog } from "./storefront/queries";
+import { RecoveryPage } from "./storefront/recovery";
 
 export function App() {
   return (
     <Routes>
+      <Route
+        path="/forgot-password"
+        element={<RecoveryPage key="forgot" mode="request" />}
+      />
+      <Route
+        path="/reset-password"
+        element={<RecoveryPage key="reset" mode="reset" />}
+      />
       <Route path="/" element={<Storefront />} />
       <Route path="/products/:productId" element={<Storefront />} />
       <Route path="/signin" element={<Storefront />} />

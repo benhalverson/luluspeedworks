@@ -32,6 +32,13 @@ beforeEach(() => {
   localStorage.clear();
   vi.mocked(authenticate).mockClear();
 });
+it("links password recovery to the validated sign-in destination", () => {
+  window.history.replaceState(null, "", "/signin?returnTo=%2Fproducts%2F12");
+  renderWithClient(<AccountPanel />);
+  expect(
+    screen.getByRole("link", { name: "Forgot password?" }),
+  ).toHaveAttribute("href", "/forgot-password?returnTo=%2Fproducts%2F12");
+});
 afterEach(() => Reflect.deleteProperty(navigator, "locks"));
 async function fill(password = "test password") {
   fireEvent.change(screen.getByLabelText("Email"), {
