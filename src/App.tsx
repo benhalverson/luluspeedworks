@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { matchPath, Route, Routes, useLocation } from "react-router";
+import { AdminWorkspace } from "./admin/workspace";
 import { authClient, returnDestination } from "./storefront/auth";
 import { cartActionSchema, useCart } from "./storefront/cart";
 import { cartView } from "./storefront/cart-view";
@@ -30,6 +31,7 @@ import { RecoveryPage } from "./storefront/recovery";
 export function App() {
   return (
     <Routes>
+      <Route path="/admin/products" element={<AdminWorkspace />} />
       <Route
         path="/forgot-password"
         element={<RecoveryPage key="forgot" mode="request" />}

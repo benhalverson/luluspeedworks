@@ -250,7 +250,7 @@ const CategoryControl = createComponentImplementation(
   ),
 );
 
-function ProductImage({ src, name }: { src: string; name: string }) {
+export function ProductImage({ src, name }: { src: string; name: string }) {
   const [broken, setBroken] = useState(false);
   return src && !broken ? (
     <img
