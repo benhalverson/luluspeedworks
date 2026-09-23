@@ -144,6 +144,23 @@ const settled = () =>
     expect(screen.getByRole("button", { name: "Discard draft" })).toBeEnabled(),
   );
 
+it("matches the storefront branding and navigates home", async () => {
+  renderWithClient(<App />);
+  await ready();
+  const adminBrand = screen.getByRole("link", { name: "Lulu Speedworks home" });
+  const adminMarkup = adminBrand.innerHTML;
+  const adminClasses = adminBrand.className;
+
+  fireEvent.click(adminBrand);
+
+  expect(window.location.pathname).toBe("/");
+  const storefrontBrand = screen.getByRole("link", {
+    name: "Lulu Speedworks home",
+  });
+  expect(adminMarkup).toBe(storefrontBrand.innerHTML);
+  expect(adminClasses).toBe(storefrontBrand.className);
+});
+
 it("keeps discarded cleanup, active editors and Recent selection together while retaining unsaved input", async () => {
   const second = draft({
     id: otherId,
