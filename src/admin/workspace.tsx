@@ -7,6 +7,7 @@ import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { apiOrigin, authClient } from "../storefront/auth";
+import { ProductImage } from "../storefront/catalog";
 import { useCatalog } from "../storefront/queries";
 import { savedTransfer, selectFiles, transferFile } from "./attachments";
 import { type CardView, DraftCard } from "./card";
@@ -109,12 +110,18 @@ export function AdminWorkspace() {
 function Workspace({ identity }: { identity: string }) {
   const client = useQueryClient();
   const catalog = useCatalog(apiOrigin);
+  const refreshCatalog = () =>
+    client.resetQueries({ queryKey: ["catalog", apiOrigin] });
   const key = ["admin-drafts", apiOrigin, identity];
   const [savedId, setSavedId] = useLocalStorage<string | null>(
     `lulu-admin-draft:${apiOrigin}:${identity}`,
     null,
   );
   const [selected, setSelected] = useState<string | null>(savedId);
+  const [cleanup, setCleanup] = useState<z.infer<
+    typeof draftCleanupResponseSchema
+  > | null>(null);
+  const discarded = cleanup?.status === "discarded" ? cleanup : null;
   const list = useQuery({
     queryKey: key,
     queryFn: ({ signal }) =>
@@ -125,8 +132,9 @@ function Workspace({ identity }: { identity: string }) {
   });
   const active =
     list.data?.drafts.filter((item) => item.status === "active") ?? [];
-  const id =
-    selected && active.some((item) => item.id === selected)
+  const id = discarded
+    ? undefined
+    : selected && active.some((item) => item.id === selected)
       ? selected
       : active[0]?.id;
   const draftKey = [...key, id];
@@ -163,9 +171,6 @@ function Workspace({ identity }: { identity: string }) {
   const queued = draft ? queues[draft.id] : undefined;
   const [notice, setNotice] = useState("");
   const [blocked, setBlocked] = useState(false);
-  const [cleanup, setCleanup] = useState<z.infer<
-    typeof draftCleanupResponseSchema
-  > | null>(null);
   const locked = useRef(false);
   const photosInput = useRef<HTMLInputElement>(null);
   const printInput = useRef<HTMLInputElement>(null);
@@ -236,6 +241,8 @@ function Workspace({ identity }: { identity: string }) {
               setCleanup(tombstone);
               if (tombstone.status !== "discarded")
                 throw new Error("Draft reload failed");
+              setSelected(tombstone.id);
+              setSavedId(null);
               await list.refetch({ throwOnError: true });
               setBlocked(false);
             }
@@ -277,7 +284,7 @@ function Workspace({ identity }: { identity: string }) {
   function choose(next: ProductDraftSummary) {
     setCleanup(null);
     setSelected(next.id);
-    setSavedId(next.id);
+    setSavedId(next.status === "active" ? next.id : null);
     setView("conversations");
     setSelection({ kind: "photo" });
     setNotice("");
@@ -590,17 +597,22 @@ function Workspace({ identity }: { identity: string }) {
         id: `${draft.id}:${position}`,
       }))
     : [];
-  const cleanupView =
-    cleanup?.status === "discarded"
-      ? cleanup
-      : draft?.attachments.cleanup.length
-        ? {
-            id: draft.id,
-            revision: draft.revision,
-            status: draft.status,
-            cleanup: draft.attachments.cleanup,
-          }
-        : cleanup;
+  const cleanupView = discarded
+    ? discarded
+    : draft && (draft.cleanupPending || draft.attachments.cleanup.length)
+      ? {
+          id: draft.id,
+          revision: draft.revision,
+          status: draft.status,
+          cleanup: draft.attachments.cleanup,
+        }
+      : cleanup;
+  const selectedSummary = list.data?.drafts.find(
+    (item) => item.id === (discarded?.id ?? id),
+  );
+  const cleanupPending =
+    (discarded ? selectedSummary?.cleanupPending : draft?.cleanupPending) ||
+    cleanupView?.cleanup.some((item) => item.status === "pending");
   return (
     <div className="mx-auto max-w-[1500px] px-4 tablet:px-9">
       <header className="flex flex-wrap items-center gap-4 border-b border-border py-5">
@@ -631,7 +643,10 @@ function Workspace({ identity }: { identity: string }) {
         >
           <Button
             variant={view === "products" ? "default" : "outline"}
-            onClick={() => setView("products")}
+            onClick={() => {
+              if (view !== "products") void refreshCatalog();
+              setView("products");
+            }}
           >
             Products
           </Button>
@@ -662,8 +677,10 @@ function Workspace({ identity }: { identity: string }) {
           {list.isError ? (
             <div role="alert">
               <p>
-                Private conversations unavailable. Administrator access is
-                required.
+                {list.error instanceof DraftRequestError &&
+                list.error.status === 403
+                  ? "Private conversations unavailable. Administrator access is required."
+                  : "Private conversations unavailable. Please retry."}
               </p>
               <Button onClick={() => void list.refetch()}>
                 Retry conversations
@@ -687,7 +704,7 @@ function Workspace({ identity }: { identity: string }) {
               Reload saved state
             </Button>
           ) : null}
-          {cleanupView ? (
+          {view === "conversations" && cleanupView ? (
             <section
               aria-label="File cleanup"
               className="my-4 rounded border border-border p-4"
@@ -697,6 +714,7 @@ function Workspace({ identity }: { identity: string }) {
                   ? "Draft discarded"
                   : "Attachment cleanup"}
               </h2>
+              {cleanupPending ? <p>File cleanup pending.</p> : null}
               {cleanupView.cleanup.length ? (
                 cleanupView.cleanup.map((item) => (
                   <p key={item.id}>
@@ -708,9 +726,9 @@ function Workspace({ identity }: { identity: string }) {
                     {item.reason ? `: ${item.reason}` : ""}
                   </p>
                 ))
-              ) : (
+              ) : !cleanupPending ? (
                 <p>No file cleanup pending.</p>
-              )}
+              ) : null}
               <Button
                 disabled={disabled}
                 onClick={() =>
@@ -724,7 +742,15 @@ function Workspace({ identity }: { identity: string }) {
                     if (result.status === "active") {
                       await reload(result.id);
                       setCleanup(null);
-                    } else setCleanup(result);
+                    } else {
+                      setCleanup(
+                        await draftRequest(
+                          `/${result.id}/cleanup`,
+                          draftCleanupResponseSchema,
+                        ),
+                      );
+                      await list.refetch({ throwOnError: true });
+                    }
                     setNotice("Cleanup state refreshed.");
                   }, cleanupView.id)
                 }
@@ -741,6 +767,13 @@ function Workspace({ identity }: { identity: string }) {
               <h1 className="my-3 font-display text-5xl font-semibold">
                 Products
               </h1>
+              <Button
+                variant="outline"
+                className="mb-4"
+                onClick={() => void refreshCatalog()}
+              >
+                Refresh catalog
+              </Button>
               <label htmlFor="admin-search" className="grid gap-2">
                 Search products
                 <Input
@@ -754,7 +787,7 @@ function Workspace({ identity }: { identity: string }) {
                 <div className="my-5">
                   <p role="status">{catalog.status}</p>
                   {catalog.failed ? (
-                    <Button onClick={() => void catalog.retry()}>
+                    <Button onClick={() => void refreshCatalog()}>
                       Retry catalog
                     </Button>
                   ) : null}
@@ -776,17 +809,13 @@ function Workspace({ identity }: { identity: string }) {
                         }
                         className="rounded border border-border bg-card p-4 text-left focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50"
                       >
-                        {product.image ? (
-                          <img
+                        <div className="mb-4">
+                          <ProductImage
+                            key={product.image}
                             src={product.image}
-                            alt=""
-                            className="mb-4 aspect-[4/3] w-full object-contain"
+                            name=""
                           />
-                        ) : (
-                          <p className="py-12 text-center text-muted-foreground">
-                            Image unavailable
-                          </p>
-                        )}
+                        </div>
                         <span className="text-xs text-muted-foreground">
                           Product #{product.id}
                         </span>
@@ -819,7 +848,11 @@ function Workspace({ identity }: { identity: string }) {
                 PRODUCT / DRAFT
               </p>
               <h1 className="mt-3 font-display text-5xl font-semibold">
-                {draft ? card?.title : "An idea starts here"}
+                {draft
+                  ? card?.title
+                  : selectedSummary
+                    ? title(selectedSummary)
+                    : "An idea starts here"}
               </h1>
               <p className="my-4 text-muted-foreground">
                 Keep the files and details for one product together.
@@ -835,7 +868,7 @@ function Workspace({ identity }: { identity: string }) {
                   </Button>
                 </div>
               ) : null}
-              {!id && list.isSuccess ? (
+              {!id && !discarded && list.isSuccess ? (
                 <p className="py-8">
                   Select a product or start a new product conversation.
                 </p>
@@ -1031,7 +1064,7 @@ function Workspace({ identity }: { identity: string }) {
                           "DELETE",
                         );
                         setCleanup(result);
-                        setSelected(null);
+                        setSelected(result.id);
                         setSavedId(null);
                         await list.refetch();
                         setNotice(
@@ -1063,19 +1096,17 @@ function Workspace({ identity }: { identity: string }) {
                 <Button
                   variant="outline"
                   className="h-auto w-full justify-start whitespace-normal py-3 text-left"
-                  aria-pressed={item.id === id}
+                  aria-pressed={item.id === (discarded?.id ?? id)}
                   disabled={disabled}
                   onClick={() =>
                     run(async () => {
-                      await saveCurrent();
                       if (item.status === "discarded") {
-                        setCleanup(
-                          await draftRequest(
-                            `/${item.id}/cleanup`,
-                            draftCleanupResponseSchema,
-                          ),
+                        const result = await draftRequest(
+                          `/${item.id}/cleanup`,
+                          draftCleanupResponseSchema,
                         );
-                        setNotice("");
+                        choose(item);
+                        setCleanup(result);
                       } else choose(item);
                     })
                   }

@@ -144,6 +144,266 @@ const settled = () =>
     expect(screen.getByRole("button", { name: "Discard draft" })).toBeEnabled(),
   );
 
+it("keeps discarded cleanup, active editors and Recent selection together while retaining unsaved input", async () => {
+  const second = draft({
+    id: otherId,
+    target: { kind: "existing", productId: 2 },
+  });
+  second.attachments.cleanup = [
+    {
+      id: photoId,
+      assetId: photoId,
+      status: "pending",
+      reason: "Active cleanup",
+    },
+  ];
+  drafts.push(
+    second,
+    draft({
+      id: transferId,
+      target: { kind: "existing", productId: 3 },
+      status: "discarded",
+      cleanupPending: true,
+    }),
+  );
+  renderWithClient(<App />);
+  await ready();
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "Unsaved first product" },
+  });
+  fireEvent.change(screen.getByLabelText("Product notes"), {
+    target: { value: "Unsent note" },
+  });
+  const recent = within(screen.getByRole("complementary"));
+  fireEvent.click(recent.getByRole("button", { name: /Product #2/ }));
+  await ready();
+  expect(
+    screen.getByText("File cleanup pending: Active cleanup"),
+  ).toBeVisible();
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "Unsaved second product" },
+  });
+  click("Products");
+  await screen.findByLabelText("Search products");
+  fireEvent.click(recent.getByRole("button", { name: /Product #3/ }));
+  await screen.findByRole("heading", { name: "Draft discarded" });
+  expect(screen.getByRole("heading", { name: "Product #3" })).toBeVisible();
+  expect(recent.getByRole("button", { name: /Product #3/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(recent.getByRole("button", { name: /Product #2/ })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(screen.queryByLabelText("Product name")).toBeNull();
+  expect(screen.queryByLabelText("Product notes")).toBeNull();
+  expect(screen.queryByText("File cleanup pending: Active cleanup")).toBeNull();
+  expect(screen.queryByLabelText("Search products")).toBeNull();
+  expect(screen.getByText("File cleanup pending.")).toBeVisible();
+  expect(screen.queryByText("No file cleanup pending.")).toBeNull();
+  click("Retry cleanup");
+  await screen.findByText("Cleanup state refreshed.");
+  expect(requests.find((request) => request.method === "POST")).toMatchObject({
+    path: `/${transferId}/cleanup/retry`,
+    body: { expectedRevision: 1 },
+  });
+  fireEvent.click(recent.getByRole("button", { name: /Product #2/ }));
+  expect(await screen.findByLabelText("Product name")).toHaveValue(
+    "Unsaved second product",
+  );
+  expect(screen.queryByText("Draft discarded")).toBeNull();
+  await settled();
+  fireEvent.click(recent.getByRole("button", { name: /New product/ }));
+  await waitFor(() =>
+    expect(screen.getByLabelText("Product name")).toHaveValue(
+      "Unsaved first product",
+    ),
+  );
+  expect(screen.getByLabelText("Product notes")).toHaveValue("Unsent note");
+  expect(requests.filter((request) => request.method === "PUT")).toHaveLength(
+    0,
+  );
+});
+
+it.each([false, true])(
+  "keeps a discarded draft selected with another active draft (lost response: %s)",
+  async (lost) => {
+    drafts.push(
+      draft({ id: otherId, target: { kind: "existing", productId: 2 } }),
+    );
+    if (lost)
+      override = (_url, init) => {
+        if (init?.method === "DELETE") {
+          current().status = "discarded";
+          return Response.json({ error: "Lost response" }, { status: 500 });
+        }
+      };
+    renderWithClient(<App />);
+    await ready();
+    click("Discard draft");
+    await screen.findByRole("heading", { name: "Draft discarded" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /New product.*Discarded/ }),
+      ).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Edit draft facts" }),
+    ).toBeNull();
+    expect(screen.queryByLabelText("Product notes")).toBeNull();
+    expect(screen.getByRole("button", { name: /Product #2/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Product #2/ })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Product #2/ }));
+    await ready();
+    expect(screen.queryByText("Draft discarded")).toBeNull();
+  },
+);
+
+it.each(["active", "discarded"] as const)(
+  "reloads %s cleanup flags without individual entries after retry",
+  async (status) => {
+    current().status = status;
+    current().cleanupPending = true;
+    override = (url, init) => {
+      if (url.pathname.endsWith("/cleanup/retry")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ expectedRevision: 1 });
+        current().cleanupPending = false;
+        current().revision++;
+        return Response.json({ id: draftId, revision: 2, status, cleanup: [] });
+      }
+    };
+    renderWithClient(<App />);
+    if (status === "discarded") {
+      fireEvent.click(
+        await screen.findByRole("button", { name: /New product.*Discarded/ }),
+      );
+    } else await ready();
+    await screen.findByText("File cleanup pending.");
+    expect(screen.queryByText("No file cleanup pending.")).toBeNull();
+    click("Retry cleanup");
+    await screen.findByText("Cleanup state refreshed.");
+    expect(screen.queryByText("File cleanup pending.")).toBeNull();
+    if (status === "active")
+      expect(screen.queryByRole("region", { name: "File cleanup" })).toBeNull();
+    else {
+      expect(screen.getByText("No file cleanup pending.")).toBeVisible();
+      expect(
+        requests.filter((request) => request.path === `/${draftId}/cleanup`),
+      ).toHaveLength(2);
+    }
+    expect(
+      requests.filter(
+        (request) =>
+          request.path === (status === "active" ? `/${draftId}` : ""),
+      ),
+    ).toHaveLength(2);
+  },
+);
+
+it("keeps retained references distinct from pending cleanup", async () => {
+  current().attachments.cleanup = [
+    {
+      id: photoId,
+      assetId: photoId,
+      status: "protected",
+      reason: "Catalog reference",
+    },
+  ];
+  renderWithClient(<App />);
+  await ready();
+  expect(
+    screen.getByText("Referenced file retained: Catalog reference"),
+  ).toBeVisible();
+  expect(screen.queryByText("File cleanup pending.")).toBeNull();
+});
+
+it.each(["network", "server", "malformed"])(
+  "offers retry without permission wording for %s list failures",
+  async (failure) => {
+    override = (url) => {
+      if (url.pathname !== "/admin/product-drafts") return;
+      if (failure === "network")
+        return Promise.reject(new TypeError("Failed to fetch"));
+      return Response.json({}, { status: failure === "server" ? 503 : 200 });
+    };
+    renderWithClient(<App />);
+    await screen.findByText("Private conversations unavailable. Please retry.");
+    expect(screen.queryByText(/Administrator access is required/)).toBeNull();
+    override = undefined;
+    click("Retry conversations");
+    await ready();
+  },
+);
+
+it("refreshes cached listings and prices on entering Products and through Refresh", async () => {
+  const client = testClient();
+  const pageKey = ["catalog", "https://api.benhalverson.dev", "page", 1];
+  client.setQueryData(pageKey, apiPage([9]));
+  renderWithClient(<App />, client);
+  await ready();
+  expect(client.getQueryData(pageKey)).toEqual(apiPage([9]));
+  click("Products");
+  await screen.findByRole("button", { name: /Product #1/ });
+  expect(screen.queryByRole("button", { name: /Product #9/ })).toBeNull();
+  override = (url) =>
+    url.pathname === "/products"
+      ? Response.json({
+          ...apiPage([1]),
+          products: [{ ...apiPage([1]).products[0], price: 12.34 }],
+        })
+      : undefined;
+  click("Refresh catalog");
+  await screen.findByText("Online $12.34");
+  expect(screen.queryByRole("button", { name: /Product #2/ })).toBeNull();
+  click("Products");
+  expect(screen.getByText("Online $12.34")).toBeVisible();
+  click("Conversations");
+  override = undefined;
+  click("Products");
+  await screen.findByRole("button", { name: /Product #2/ });
+  expect(screen.queryByText("Online $12.34")).toBeNull();
+});
+
+it("falls back for failed catalog images and recovers when the source changes", async () => {
+  const client = testClient();
+  renderWithClient(<App />, client);
+  await ready();
+  await act(async () => click("Products"));
+  await waitFor(() => expect(client.isFetching()).toBe(0));
+  const listing = await screen.findByRole("button", { name: /Product #1/ });
+  const image = required(listing.querySelector("img") ?? undefined);
+  fireEvent.error(image);
+  expect(within(listing).getByText("Image unavailable")).toBeVisible();
+  expect(listing.querySelector("img")).toBeNull();
+  act(() =>
+    client.setQueryData(
+      ["catalog", "https://api.benhalverson.dev", "page", 1],
+      {
+        ...apiPage([1, 2]),
+        products: apiPage([1, 2]).products.map((product) => ({
+          ...product,
+          image: "https://photos.example.com/repaired.png",
+        })),
+      },
+    ),
+  );
+  await waitFor(() =>
+    expect(listing.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://photos.example.com/repaired.png",
+    ),
+  );
+  expect(within(listing).queryByText("Image unavailable")).toBeNull();
+});
+
 it("renders identical saved notes as separate history entries without duplicate-key warnings", async () => {
   const consoleError = vi.spyOn(console, "error");
   renderWithClient(<App />);
@@ -564,7 +824,7 @@ it("browses authoritative products, saves independent facts through the real car
   expect(
     screen.queryByRole("button", { name: /Product #1/ }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: /Product #2/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Product #2/ }));
   await screen.findByLabelText("Product name");
   await settled();
   expect(current().state.answers.name).toBe("Pit tray");
