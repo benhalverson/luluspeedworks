@@ -1,5 +1,10 @@
 import type { A2uiClientAction } from "@a2ui/web_core/v0_9";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useLocalStorage } from "usehooks-ts";
@@ -91,7 +96,7 @@ export function AdminWorkspace() {
   if (session.error || !session.data?.user)
     return (
       <main className="p-8">
-        <h1 className="font-display text-3xl">Product build log</h1>
+        <h1 className="font-display text-3xl">Sign in required</h1>
         <p className="my-4">
           Sign in to open your private product conversations.
         </p>
@@ -104,11 +109,76 @@ export function AdminWorkspace() {
       </main>
     );
   return (
-    <Workspace key={session.data.user.id} identity={session.data.user.id} />
+    <AuthorizedWorkspace
+      key={session.data.user.id}
+      identity={session.data.user.id}
+    />
   );
 }
 
-function Workspace({ identity }: { identity: string }) {
+function AuthorizedWorkspace({ identity }: { identity: string }) {
+  const [hasVerifiedAccess, setHasVerifiedAccess] = useState(false);
+  const list = useQuery({
+    queryKey: ["admin-drafts", apiOrigin, identity],
+    queryFn: ({ signal }) =>
+      draftRequest("", productDraftListSchema, "GET", undefined, signal),
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+  });
+  const status =
+    list.error instanceof DraftRequestError ? list.error.status : null;
+  useEffect(() => {
+    if (list.isSuccess && list.isFetchedAfterMount) setHasVerifiedAccess(true);
+    else if (status === 401 || status === 403) setHasVerifiedAccess(false);
+  }, [list.isSuccess, list.isFetchedAfterMount, status]);
+  if (list.isPending || !list.isFetchedAfterMount)
+    return (
+      <main className="p-8">
+        <p role="status">Checking administrator access…</p>
+      </main>
+    );
+  if (
+    !list.data ||
+    (list.isError && (!hasVerifiedAccess || status === 401 || status === 403))
+  )
+    return (
+      <main className="p-8">
+        <p role="alert" className="mb-4">
+          {status === 401
+            ? "Your session has expired. Sign in again to continue."
+            : status === 403
+              ? "Private conversations unavailable. Administrator access is required."
+              : "Private conversations unavailable. Please retry."}
+        </p>
+        {status === 401 ? (
+          <Link
+            to="/signin?returnTo=%2Fadmin%2Fproducts"
+            className="text-primary underline"
+          >
+            Sign in
+          </Link>
+        ) : (
+          <Button onClick={() => void list.refetch()}>
+            Retry conversations
+          </Button>
+        )}
+      </main>
+    );
+  return (
+    <Workspace identity={identity} list={list} drafts={list.data.drafts} />
+  );
+}
+
+function Workspace({
+  identity,
+  list,
+  drafts,
+}: {
+  identity: string;
+  list: UseQueryResult<z.infer<typeof productDraftListSchema>>;
+  drafts: ProductDraftSummary[];
+}) {
   const client = useQueryClient();
   const catalog = useCatalog(apiOrigin);
   const refreshCatalog = () =>
@@ -123,16 +193,7 @@ function Workspace({ identity }: { identity: string }) {
     typeof draftCleanupResponseSchema
   > | null>(null);
   const discarded = cleanup?.status === "discarded" ? cleanup : null;
-  const list = useQuery({
-    queryKey: key,
-    queryFn: ({ signal }) =>
-      draftRequest("", productDraftListSchema, "GET", undefined, signal),
-    retry: false,
-    staleTime: 0,
-    gcTime: 0,
-  });
-  const active =
-    list.data?.drafts.filter((item) => item.status === "active") ?? [];
+  const active = drafts.filter((item) => item.status === "active");
   const id = discarded
     ? undefined
     : selected && active.some((item) => item.id === selected)
@@ -608,7 +669,7 @@ function Workspace({ identity }: { identity: string }) {
           cleanup: draft.attachments.cleanup,
         }
       : cleanup;
-  const selectedSummary = list.data?.drafts.find(
+  const selectedSummary = drafts.find(
     (item) => item.id === (discarded?.id ?? id),
   );
   const cleanupPending =
@@ -663,15 +724,9 @@ function Workspace({ identity }: { identity: string }) {
           >
             {notice}
           </p>
-          {list.isPending ? <p role="status">Loading conversations…</p> : null}
           {list.isError ? (
             <div role="alert">
-              <p>
-                {list.error instanceof DraftRequestError &&
-                list.error.status === 403
-                  ? "Private conversations unavailable. Administrator access is required."
-                  : "Private conversations unavailable. Please retry."}
-              </p>
+              <p>Private conversations unavailable. Please retry.</p>
               <Button onClick={() => void list.refetch()}>
                 Retry conversations
               </Button>
@@ -1081,7 +1136,7 @@ function Workspace({ identity }: { identity: string }) {
             Continue a draft or a product update.
           </p>
           <ul className="space-y-2">
-            {list.data?.drafts.map((item) => (
+            {drafts.map((item) => (
               <li key={item.id}>
                 <Button
                   variant="outline"

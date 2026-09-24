@@ -354,11 +354,177 @@ it.each(["network", "server", "malformed"])(
     renderWithClient(<App />);
     await screen.findByText("Private conversations unavailable. Please retry.");
     expect(screen.queryByText(/Administrator access is required/)).toBeNull();
+    expect(
+      screen.queryByRole("navigation", { name: "Admin navigation" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "+ New product" })).toBeNull();
     override = undefined;
     click("Retry conversations");
     await ready();
   },
 );
+
+it.each([401, 403])(
+  "hides the workspace when the API denies access with %s",
+  async (status) => {
+    override = (url) =>
+      url.pathname === "/admin/product-drafts"
+        ? Response.json({ error: "Denied" }, { status })
+        : undefined;
+    renderWithClient(<App />);
+    await screen.findByRole("alert");
+    expect(
+      screen.queryByRole("navigation", { name: "Admin navigation" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "+ New product" })).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.map(([input]) => new URL(String(input)).pathname),
+    ).toEqual(["/admin/product-drafts"]);
+  },
+);
+
+it.each([200, 403, 503])(
+  "waits for fresh server authorization even when drafts are cached (%s)",
+  async (status) => {
+    const client = testClient();
+    const {
+      state: _state,
+      context: _context,
+      attachments: _attachments,
+      ...summary
+    } = current();
+    const payload = { drafts: [summary] };
+    client.setQueryData(
+      ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+      payload,
+    );
+    let resolve: ((response: Response) => void) | undefined;
+    override = (url) =>
+      url.pathname === "/admin/product-drafts"
+        ? new Promise<Response>((done) => {
+            resolve = done;
+          })
+        : undefined;
+    renderWithClient(<App />, client);
+    await waitFor(() => expect(resolve).toBeDefined());
+    expect(
+      screen.queryByRole("navigation", { name: "Admin navigation" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "+ New product" })).toBeNull();
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.map(([input]) => new URL(String(input)).pathname),
+    ).toEqual(["/admin/product-drafts"]);
+    override = undefined;
+    await act(() => resolve?.(Response.json(payload, { status })));
+    if (status === 200) {
+      await ready();
+      expect(
+        screen.getByRole("navigation", { name: "Admin navigation" }),
+      ).toBeVisible();
+    } else {
+      await screen.findByRole("alert");
+      expect(
+        screen.queryByRole("navigation", { name: "Admin navigation" }),
+      ).toBeNull();
+    }
+  },
+);
+
+it.each([401, 403])(
+  "removes an open workspace when authorization is revoked with %s",
+  async (status) => {
+    const client = testClient();
+    renderWithClient(<App />, client);
+    await ready();
+    override = (url) =>
+      url.pathname === "/admin/product-drafts"
+        ? Response.json({ error: "Denied" }, { status })
+        : undefined;
+    await act(() =>
+      client.invalidateQueries({
+        queryKey: ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+        exact: true,
+      }),
+    );
+    await screen.findByRole("alert");
+    expect(
+      screen.queryByRole("navigation", { name: "Admin navigation" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "+ New product" })).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    override = (url) =>
+      url.pathname === "/admin/product-drafts"
+        ? Response.json({}, { status: 503 })
+        : undefined;
+    await act(() =>
+      client.invalidateQueries({
+        queryKey: ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+        exact: true,
+      }),
+    );
+    await screen.findByText("Private conversations unavailable. Please retry.");
+    expect(
+      screen.queryByRole("navigation", { name: "Admin navigation" }),
+    ).toBeNull();
+    override = undefined;
+    click("Retry conversations");
+    await ready();
+  },
+);
+
+it("retains authorized edits through a temporary list failure and retries", async () => {
+  const client = testClient();
+  renderWithClient(<App />, client);
+  await ready();
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "Unsaved product name" },
+  });
+  override = (url) =>
+    url.pathname === "/admin/product-drafts"
+      ? Response.json({}, { status: 503 })
+      : undefined;
+  await act(() =>
+    client.invalidateQueries({
+      queryKey: ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+      exact: true,
+    }),
+  );
+  await screen.findByText("Private conversations unavailable. Please retry.");
+  expect(screen.getByLabelText("Product name")).toHaveValue(
+    "Unsaved product name",
+  );
+  override = undefined;
+  click("Retry conversations");
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(screen.getByLabelText("Product name")).toHaveValue(
+    "Unsaved product name",
+  );
+});
+
+it("rechecks access when the account changes and hides the workspace on sign-out", async () => {
+  const view = renderWithClient(<App />);
+  await ready();
+  override = (url) =>
+    url.pathname === "/admin/product-drafts"
+      ? Response.json({ error: "Forbidden" }, { status: 403 })
+      : undefined;
+  session.data = { user: { id: "member" } };
+  view.rerender(<App />);
+  expect(
+    screen.queryByRole("navigation", { name: "Admin navigation" }),
+  ).toBeNull();
+  await screen.findByText(/Administrator access is required/);
+  session.data = null;
+  view.rerender(<App />);
+  expect(screen.getByRole("link", { name: "Sign in" })).toBeVisible();
+  expect(screen.queryByRole("complementary")).toBeNull();
+});
 
 it("refreshes cached listings and prices on entering Products and through Refresh", async () => {
   const client = testClient();
@@ -806,6 +972,7 @@ it("uses existing sign-in and waits for the session", () => {
   session.isPending = true;
   const view = renderWithClient(<App />);
   expect(screen.getByText("Checking your session…")).toBeVisible();
+  expect(fetch).not.toHaveBeenCalled();
   session.isPending = false;
   session.data = null;
   view.rerender(<App />);
@@ -818,6 +985,10 @@ it("uses existing sign-in and waits for the session", () => {
   expect(
     screen.getByText("Sign in to open your private product conversations."),
   ).toBeVisible();
+  expect(
+    screen.queryByRole("navigation", { name: "Admin navigation" }),
+  ).toBeNull();
+  expect(fetch).not.toHaveBeenCalled();
 });
 it("browses authoritative products, saves independent facts through the real card and resumes", async () => {
   renderWithClient(
