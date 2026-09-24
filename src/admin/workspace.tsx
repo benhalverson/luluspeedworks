@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useLocalStorage } from "usehooks-ts";
 import { z } from "zod";
+import { BrandLink } from "../components/brand-link";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { apiOrigin, authClient } from "../storefront/auth";
@@ -616,23 +617,12 @@ function Workspace({ identity }: { identity: string }) {
   return (
     <div className="mx-auto max-w-[1500px] px-4 tablet:px-9">
       <header className="flex flex-wrap items-center gap-4 border-b border-border py-5">
-        <Link
-          to="/"
-          aria-label="Lulu Speedworks home"
+        <BrandLink
           onClick={(event) => {
             if (busy) event.preventDefault();
           }}
-        >
-          <img
-            src="/brand/lulu-logo.svg"
-            alt="Lulu Speedworks"
-            className="h-14 w-12"
-          />
-        </Link>
+        />
         <div className="mr-auto">
-          <p className="text-[10px] font-semibold tracking-[0.18em] text-muted-foreground">
-            LULU SPEEDWORKS
-          </p>
           <p className="font-display text-2xl font-semibold">
             Product build log
           </p>
