@@ -29,7 +29,11 @@ import {
   productDraftListSchema,
   productDraftResponseSchema,
 } from "./contracts";
-import { DraftRequestError, draftRequest } from "./request";
+import {
+  DraftRequestError,
+  draftRequest,
+  isAuthorizationFailure,
+} from "./request";
 
 const fields = [
   "name",
@@ -119,7 +123,11 @@ export function AdminWorkspace() {
 
 function AuthorizedWorkspace({ identity }: { identity: string }) {
   const client = useQueryClient();
-  const [hasVerifiedAccess, setHasVerifiedAccess] = useState(false);
+  const [access, setAccess] = useState<{
+    verified: boolean;
+    denied: boolean;
+    error: unknown;
+  }>({ verified: false, denied: false, error: null });
   const { data: list = { drafts: [] } } = useQuery<
     z.infer<typeof productDraftListSchema>
   >({
@@ -132,40 +140,47 @@ function AuthorizedWorkspace({ identity }: { identity: string }) {
   const authorization = useQuery({
     queryKey: ["admin-draft-access", apiOrigin, identity],
     queryFn: async ({ signal }) => {
-      const result = await draftRequest(
-        "",
-        productDraftListSchema,
-        "GET",
-        undefined,
-        signal,
-      );
-      signal.throwIfAborted();
-      client.setQueryData(["admin-drafts", apiOrigin, identity], result);
-      return result;
+      try {
+        const result = await draftRequest(
+          "",
+          productDraftListSchema,
+          "GET",
+          undefined,
+          signal,
+        );
+        signal.throwIfAborted();
+        setAccess({ verified: true, denied: false, error: null });
+        client.setQueryData(["admin-drafts", apiOrigin, identity], result);
+        return result;
+      } catch (error) {
+        signal.throwIfAborted();
+        setAccess((previous) => ({
+          verified: previous.verified && !isAuthorizationFailure(error),
+          denied: previous.denied || isAuthorizationFailure(error),
+          error,
+        }));
+        throw error;
+      }
     },
     retry: false,
     staleTime: 0,
     gcTime: 0,
   });
   const status =
-    authorization.error instanceof DraftRequestError
-      ? authorization.error.status
-      : null;
-  useEffect(() => {
-    if (authorization.isSuccess && authorization.isFetchedAfterMount)
-      setHasVerifiedAccess(true);
-    else if (status === 401 || status === 403) setHasVerifiedAccess(false);
-  }, [authorization.isSuccess, authorization.isFetchedAfterMount, status]);
-  if (authorization.isPending || !authorization.isFetchedAfterMount)
+    access.error instanceof DraftRequestError ? access.error.status : null;
+  if (
+    !access.denied &&
+    (authorization.isPending || !authorization.isFetchedAfterMount)
+  )
     return (
       <main className="p-8">
         <p role="status">Checking administrator access…</p>
       </main>
     );
   if (
+    access.denied ||
     !authorization.data ||
-    (authorization.isError &&
-      (!hasVerifiedAccess || status === 401 || status === 403))
+    (authorization.isError && !access.verified)
   )
     return (
       <main className="p-8">
@@ -191,7 +206,18 @@ function AuthorizedWorkspace({ identity }: { identity: string }) {
       </main>
     );
   return (
-    <Workspace identity={identity} list={authorization} drafts={list.drafts} />
+    <Workspace
+      identity={identity}
+      list={authorization}
+      drafts={list.drafts}
+      onAuthorizationFailure={(error) => {
+        void client.cancelQueries({
+          queryKey: ["admin-draft-access", apiOrigin, identity],
+          exact: true,
+        });
+        setAccess({ verified: false, denied: true, error });
+      }}
+    />
   );
 }
 
@@ -199,11 +225,27 @@ function Workspace({
   identity,
   list,
   drafts,
+  onAuthorizationFailure,
 }: {
   identity: string;
   list: UseQueryResult<z.infer<typeof productDraftListSchema>>;
   drafts: ProductDraftSummary[];
+  onAuthorizationFailure: (error: DraftRequestError) => void;
 }) {
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  function stopRecovery(error: unknown) {
+    if (!mounted.current) return true;
+    if (!isAuthorizationFailure(error)) return false;
+    mounted.current = false;
+    onAuthorizationFailure(error);
+    return true;
+  }
   const client = useQueryClient();
   const catalog = useCatalog(apiOrigin);
   const refreshCatalog = () =>
@@ -228,14 +270,20 @@ function Workspace({
   const detail = useQuery({
     queryKey: draftKey,
     enabled: Boolean(id),
-    queryFn: ({ signal }) =>
-      draftRequest(
-        `/${id}`,
-        productDraftResponseSchema,
-        "GET",
-        undefined,
-        signal,
-      ),
+    queryFn: async ({ signal }) => {
+      try {
+        return await draftRequest(
+          `/${id}`,
+          productDraftResponseSchema,
+          "GET",
+          undefined,
+          signal,
+        );
+      } catch (error) {
+        if (!signal.aborted) stopRecovery(error);
+        throw error;
+      }
+    },
     retry: false,
     staleTime: 0,
     gcTime: 0,
@@ -302,6 +350,9 @@ function Workspace({
     setBlocked(false);
     return result;
   }
+  async function refreshList(throwOnError = true) {
+    if (mounted.current) await list.refetch({ throwOnError });
+  }
   function run(
     work: () => Promise<void>,
     currentId: string | null | undefined = id,
@@ -313,6 +364,7 @@ function Workspace({
       try {
         await work();
       } catch (error) {
+        if (stopRecovery(error)) return;
         setBlocked(true);
         const reason =
           error instanceof Error ? error.message : "Draft request failed.";
@@ -320,7 +372,8 @@ function Workspace({
           if (currentId) {
             try {
               await reload(currentId);
-            } catch {
+            } catch (error) {
+              if (stopRecovery(error)) return;
               const tombstone = await draftRequest(
                 `/${currentId}/cleanup`,
                 draftCleanupResponseSchema,
@@ -330,17 +383,18 @@ function Workspace({
                 throw new Error("Draft reload failed");
               setSelected(tombstone.id);
               setSavedId(null);
-              await list.refetch({ throwOnError: true });
+              await refreshList();
               setBlocked(false);
             }
           } else {
-            await list.refetch({ throwOnError: true });
+            await refreshList();
             setBlocked(false);
           }
           setNotice(
             `${reason} Saved state has been reloaded. Review it before retrying; your typed answers are retained.`,
           );
-        } catch {
+        } catch (error) {
+          if (stopRecovery(error)) return;
           setNotice(
             `${reason} The saved outcome is unresolved. Reload saved state before making another change.`,
           );
@@ -573,13 +627,16 @@ function Workspace({
             queue.selection.replacesId,
             queue.selection.retry,
           );
+          if (!mounted.current) return;
           saved++;
         } catch (error) {
+          if (stopRecovery(error)) return;
           errors.push(
             `${file.name}: ${error instanceof Error ? error.message : "Transfer failed."}`,
           );
           retain();
           latest = await reload(start.id);
+          if (!mounted.current) return;
           if (
             !(
               error instanceof DraftRequestError &&
@@ -764,7 +821,7 @@ function Workspace({
                 run(async () => {
                   if (id) await reload(id);
                   else {
-                    await list.refetch({ throwOnError: true });
+                    await refreshList();
                     setBlocked(false);
                   }
                   setNotice("Saved state reloaded. Review before continuing.");
@@ -819,7 +876,7 @@ function Workspace({
                           draftCleanupResponseSchema,
                         ),
                       );
-                      await list.refetch({ throwOnError: true });
+                      await refreshList();
                     }
                     setNotice("Cleanup state refreshed.");
                   }, cleanupView.id)
@@ -1136,7 +1193,7 @@ function Workspace({
                         setCleanup(result);
                         setSelected(result.id);
                         setSavedId(null);
-                        await list.refetch();
+                        await refreshList(false);
                         setNotice(
                           "Draft discarded. Referenced files and submitted operations are retained.",
                         );

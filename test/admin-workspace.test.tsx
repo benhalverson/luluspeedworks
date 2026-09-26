@@ -443,9 +443,226 @@ it.each([200, 403, 503])(
   },
 );
 
+it.each(
+  [401, 403].flatMap((status) => [
+    { status, operation: "refresh" },
+    { status, operation: "save" },
+  ]),
+)(
+  "revokes the whole workspace after $operation returns $status",
+  async ({ status, operation }) => {
+    const client = testClient();
+    renderWithClient(<App />, client);
+    await ready();
+    click("Edit draft facts");
+    fireEvent.change(screen.getByLabelText("Product name"), {
+      target: { value: "Private unsaved product" },
+    });
+    vi.mocked(fetch).mockClear();
+    override = (url) =>
+      url.pathname === `/admin/product-drafts/${draftId}`
+        ? Response.json({ error: "Denied" }, { status })
+        : undefined;
+    if (operation === "save") click("Save draft answers");
+    else
+      await act(() =>
+        client.invalidateQueries({
+          queryKey: [
+            "admin-drafts",
+            "https://api.benhalverson.dev",
+            "admin",
+            draftId,
+          ],
+          exact: true,
+        }),
+      );
+    await screen.findByText(
+      status === 401
+        ? "Your session has expired. Sign in again to continue."
+        : "Private conversations unavailable. Administrator access is required.",
+    );
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(screen.queryByRole("button", { name: "+ New product" })).toBeNull();
+    expect(screen.queryByLabelText("Product name")).toBeNull();
+    expect(screen.queryByLabelText("Product notes")).toBeNull();
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+    expect(fetch).toHaveBeenCalledTimes(1);
+  },
+);
+
 it.each([401, 403])(
-  "keeps access denied after a delayed save completes following %s revocation",
+  "hides the workspace on initial detail denial (%s)",
   async (status) => {
+    override = (url) =>
+      url.pathname === `/admin/product-drafts/${draftId}`
+        ? Response.json({ error: "Denied" }, { status })
+        : undefined;
+    renderWithClient(<App />);
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(screen.queryByLabelText("Product notes")).toBeNull();
+  },
+);
+
+it.each(["detail", "cleanup"])(
+  "stops recovery when its %s read denies access",
+  async (stage) => {
+    const client = testClient();
+    renderWithClient(<App />, client);
+    await ready();
+    click("Edit draft facts");
+    fireEvent.change(screen.getByLabelText("Product name"), {
+      target: { value: "Private" },
+    });
+    vi.mocked(fetch).mockClear();
+    override = (url, init) => {
+      if (init?.method === "PUT") return Response.json({}, { status: 500 });
+      if (url.pathname === `/admin/product-drafts/${draftId}`)
+        return Response.json({}, { status: stage === "detail" ? 403 : 404 });
+      if (url.pathname.endsWith("/cleanup"))
+        return Response.json({}, { status: 401 });
+    };
+    click("Save draft answers");
+    await screen.findByRole("alert");
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(stage === "detail" ? 2 : 3);
+  },
+);
+
+it.each([200, 503])(
+  "cancels older verification on detail denial and ignores its later %s response",
+  async (staleStatus) => {
+    const client = testClient();
+    renderWithClient(<App />, client);
+    await ready();
+    const accessKey = [
+      "admin-draft-access",
+      "https://api.benhalverson.dev",
+      "admin",
+    ];
+    let finish: ((response: Response) => void) | undefined;
+    let signal: AbortSignal | null | undefined;
+    override = (url, init) => {
+      if (url.pathname === "/admin/product-drafts") {
+        signal = init?.signal;
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      }
+      if (url.pathname === `/admin/product-drafts/${draftId}`)
+        return Response.json({}, { status: 403 });
+    };
+    let verifying: Promise<void> | undefined;
+    act(() => {
+      verifying = client.invalidateQueries({ queryKey: accessKey });
+    });
+    await waitFor(() => expect(finish).toBeDefined());
+    await act(() =>
+      client.invalidateQueries({
+        queryKey: [
+          "admin-drafts",
+          "https://api.benhalverson.dev",
+          "admin",
+          draftId,
+        ],
+      }),
+    );
+    await screen.findByText(/Administrator access is required/);
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {
+      required(finish)(Response.json({ drafts: [] }, { status: staleStatus }));
+      await verifying;
+    });
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Administrator access is required",
+    );
+    override = (url) =>
+      url.pathname === "/admin/product-drafts"
+        ? Response.json({}, { status: 503 })
+        : undefined;
+    click("Retry conversations");
+    await screen.findByText("Private conversations unavailable. Please retry.");
+    expect(screen.queryByRole("navigation")).toBeNull();
+    override = (url) =>
+      url.pathname === "/admin/product-drafts"
+        ? Response.json({ drafts: "invalid" })
+        : undefined;
+    click("Retry conversations");
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(screen.queryByRole("navigation")).toBeNull();
+    override = undefined;
+    click("Retry conversations");
+    await ready();
+  },
+);
+
+it.each(["re-entry", "account", "sign-out"])(
+  "ignores an obsolete workspace denial after %s in Strict Mode",
+  async (transition) => {
+    const client = testClient();
+    let view = renderWithClient(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+      client,
+    );
+    await ready();
+    let finish: ((response: Response) => void) | undefined;
+    override = (_url, init) =>
+      init?.method === "PUT"
+        ? new Promise<Response>((resolve) => {
+            finish = resolve;
+          })
+        : undefined;
+    click("Edit draft facts");
+    fireEvent.change(screen.getByLabelText("Product name"), {
+      target: { value: "Earlier visit" },
+    });
+    click("Save draft answers");
+    await waitFor(() => expect(finish).toBeDefined());
+    override = undefined;
+    if (transition === "re-entry") {
+      view.unmount();
+      view = renderWithClient(
+        <StrictMode>
+          <App />
+        </StrictMode>,
+        client,
+      );
+    } else {
+      session.data =
+        transition === "account" ? { user: { id: "second-admin" } } : null;
+      view.rerender(
+        <StrictMode>
+          <App />
+        </StrictMode>,
+      );
+    }
+    if (transition === "sign-out")
+      await screen.findByRole("heading", { name: "Sign in required" });
+    else await ready();
+    vi.mocked(fetch).mockClear();
+    await act(() => required(finish)(Response.json({}, { status: 403 })));
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    if (transition !== "sign-out")
+      expect(screen.getByRole("navigation")).toBeVisible();
+  },
+);
+
+it.each(
+  [401, 403].flatMap((status) => [
+    { status, source: "list" },
+    { status, source: "detail" },
+  ]),
+)(
+  "keeps access denied after a delayed save completes following $status $source revocation",
+  async ({ status, source }) => {
     const client = testClient();
     renderWithClient(<App />, client);
     await ready();
@@ -463,15 +680,17 @@ it.each([401, 403])(
     click("Save draft answers");
     await waitFor(() => expect(resolveSave).toBeDefined());
     override = (url) =>
-      url.pathname === "/admin/product-drafts"
+      url.pathname ===
+      `/admin/product-drafts${source === "detail" ? `/${draftId}` : ""}`
         ? Response.json({ error: "Denied" }, { status })
         : undefined;
     await act(() =>
       client.invalidateQueries({
         queryKey: [
-          "admin-draft-access",
+          source === "detail" ? "admin-drafts" : "admin-draft-access",
           "https://api.benhalverson.dev",
           "admin",
+          ...(source === "detail" ? [draftId] : []),
         ],
         exact: true,
       }),
@@ -894,6 +1113,282 @@ it.each(["saved", "incomplete", "concurrent"] as const)(
     await screen.findByText("Attachments saved.");
     expect(requested).toMatchObject({ name: "fresh.png", kind: "photo" });
     expect(requested).not.toHaveProperty("replacesId");
+  },
+);
+
+it.each(
+  [401, 403].flatMap((status) =>
+    ["intent", "photo", "retry", "confirm", "recovery", "operation"].map(
+      (stage) => ({ status, stage }),
+    ),
+  ),
+)(
+  "revokes access on attachment $stage denial ($status) and stops queued files and recovery",
+  async ({ status, stage }) => {
+    if (stage === "retry") current().attachments.transfers = [transfer()];
+    if (stage === "operation") {
+      current().attachments.photos = [photo()];
+      current().attachments.photoOrder = [photoId];
+    }
+    const client = testClient();
+    renderWithClient(<App />, client);
+    if (stage === "retry") {
+      await screen.findByLabelText("Product name");
+      click("Reselect file");
+    } else {
+      await ready();
+      click("Edit draft facts");
+    }
+    const paths: string[] = [];
+    const denied = () => Response.json({ error: "Denied" }, { status });
+    override = (url, init) => {
+      paths.push(url.pathname);
+      if (
+        url.pathname.endsWith("/intents") ||
+        url.pathname.endsWith("/retry")
+      ) {
+        if (stage === "intent" || stage === "retry") return denied();
+        return Response.json({
+          draft: current(),
+          transfer: {
+            id: transferId,
+            upload: {
+              method: "PUT",
+              url:
+                stage === "confirm"
+                  ? "https://uploads.example.test/bytes"
+                  : "/photo-bytes",
+              headers: {},
+            },
+          },
+        });
+      }
+      if (url.pathname === "/photo-bytes")
+        return stage === "recovery"
+          ? Response.json({}, { status: 500 })
+          : denied();
+      if (url.hostname === "uploads.example.test") return new Response(null);
+      if (
+        url.pathname.endsWith("/confirm") ||
+        init?.method === "DELETE" ||
+        stage === "recovery"
+      )
+        return denied();
+    };
+    if (stage === "operation") click("Delete");
+    else
+      fireEvent.change(
+        screen.getByLabelText(
+          stage === "retry"
+            ? "Replacement / reselected photo"
+            : stage === "confirm"
+              ? "Print file"
+              : "Product photos (up to 5)",
+        ),
+        {
+          target: {
+            files:
+              stage === "retry"
+                ? [new File(["1234"], "resume.png")]
+                : stage === "confirm"
+                  ? [new File(["1234"], "part.stl")]
+                  : [
+                      new File(["1234"], "first.png"),
+                      new File(["1234"], "second.png"),
+                    ],
+          },
+        },
+      );
+    await screen.findByText(
+      status === 401
+        ? /Your session has expired/
+        : /Administrator access is required/,
+    );
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(paths).toHaveLength(
+      stage === "confirm" || stage === "recovery"
+        ? 3
+        : stage === "photo"
+          ? 2
+          : 1,
+    );
+  },
+);
+
+it.each(["upload", "recovery", "denial"])(
+  "stops queued files after denial while a prior %s finishes",
+  async (stage) => {
+    const client = testClient();
+    renderWithClient(<App />, client);
+    await ready();
+    let finish: ((response: Response) => void) | undefined;
+    const delayed = () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    override = (url) => {
+      if (url.pathname.endsWith("/intents"))
+        return Response.json({
+          draft: current(),
+          transfer: {
+            id: transferId,
+            upload: { method: "PUT", url: "/photo-bytes", headers: {} },
+          },
+        });
+      if (url.pathname === "/photo-bytes")
+        return stage !== "recovery"
+          ? delayed()
+          : Response.json({}, { status: 500 });
+      if (url.pathname === `/admin/product-drafts/${draftId}`)
+        return !finish ? delayed() : Response.json({}, { status: 403 });
+    };
+    fireEvent.change(screen.getByLabelText("Product photos (up to 5)"), {
+      target: {
+        files: [
+          new File(["1234"], "first.png"),
+          new File(["1234"], "second.png"),
+        ],
+      },
+    });
+    await waitFor(() => expect(finish).toBeDefined());
+    await act(() =>
+      client.invalidateQueries({
+        queryKey: [
+          "admin-drafts",
+          "https://api.benhalverson.dev",
+          "admin",
+          draftId,
+        ],
+      }),
+    );
+    await screen.findByText(/Administrator access is required/);
+    override = undefined;
+    click("Retry conversations");
+    await ready();
+    vi.mocked(fetch).mockClear();
+    const saved = draft();
+    saved.attachments.transfers = [transfer({ status: "saved" })];
+    await act(() =>
+      required(finish)(
+        stage === "denial"
+          ? Response.json({}, { status: 403 })
+          : Response.json(stage === "upload" ? { draft: saved } : saved),
+      ),
+    );
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.getByRole("navigation")).toBeVisible();
+  },
+);
+
+it("does not start verification when an obsolete discard finishes after denial", async () => {
+  const client = testClient();
+  renderWithClient(<App />, client);
+  await ready();
+  let finish: ((response: Response) => void) | undefined;
+  override = (url, init) => {
+    if (init?.method === "DELETE")
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    if (url.pathname === `/admin/product-drafts/${draftId}`)
+      return Response.json({}, { status: 403 });
+  };
+  click("Discard draft");
+  await waitFor(() => expect(finish).toBeDefined());
+  await act(() =>
+    client.invalidateQueries({
+      queryKey: [
+        "admin-drafts",
+        "https://api.benhalverson.dev",
+        "admin",
+        draftId,
+      ],
+    }),
+  );
+  await screen.findByText(/Administrator access is required/);
+  vi.mocked(fetch).mockClear();
+  await act(() =>
+    required(finish)(
+      Response.json({
+        id: draftId,
+        revision: 2,
+        status: "discarded",
+        cleanup: [],
+      }),
+    ),
+  );
+  await waitFor(() => expect(client.isMutating()).toBe(0));
+  expect(fetch).not.toHaveBeenCalled();
+  expect(screen.queryByRole("navigation")).toBeNull();
+});
+
+it("ignores a denied detail response aborted by Strict Mode cleanup", async () => {
+  let finish: ((response: Response) => void) | undefined;
+  let signal: AbortSignal | null | undefined;
+  override = (url, init) => {
+    if (url.pathname === `/admin/product-drafts/${draftId}` && !finish) {
+      signal = init?.signal;
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    }
+  };
+  renderWithClient(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+  await ready();
+  expect(signal?.aborted).toBe(true);
+  await act(() => required(finish)(Response.json({}, { status: 403 })));
+  expect(screen.getByRole("navigation")).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it.each([401, 403])(
+  "treats external print upload %s as a transfer failure and retains the editor",
+  async (status) => {
+    renderWithClient(<App />);
+    await ready();
+    click("Edit draft facts");
+    fireEvent.change(screen.getByLabelText("Product name"), {
+      target: { value: "Keep my changes" },
+    });
+    const paths: string[] = [];
+    override = (url) => {
+      paths.push(url.pathname);
+      if (url.pathname.endsWith("/intents"))
+        return Response.json({
+          draft: current(),
+          transfer: {
+            id: transferId,
+            upload: {
+              method: "PUT",
+              url: "https://uploads.example.test/bytes",
+              headers: {},
+            },
+          },
+        });
+      if (url.hostname === "uploads.example.test")
+        return Response.json({}, { status });
+    };
+    fireEvent.change(screen.getByLabelText("Print file"), {
+      target: { files: [new File(["1234"], "part.stl")] },
+    });
+    await screen.findByText(new RegExp(`Transfer failed \\(${status}\\)`));
+    await settled();
+    expect(screen.getByRole("navigation")).toBeVisible();
+    expect(screen.getByLabelText("Product name")).toHaveValue(
+      "Keep my changes",
+    );
+    expect(paths).toEqual([
+      `/admin/product-drafts/${draftId}/attachments/intents`,
+      "/bytes",
+      `/admin/product-drafts/${draftId}`,
+    ]);
   },
 );
 
