@@ -1,5 +1,7 @@
 # Lulu Speedworks
 
+Historical domain and prototype notes from 2026-09-20. For current implementation status and navigation, use the [repository README](../../README.md); future-tense prototype notes below describe that earlier snapshot.
+
 Lulu Speedworks is a store for physical RC products, with Lulu as its brand mascot.
 
 The [storefront specification](storefront-spec.md) is the canonical implementation brief: confirmed requirements, published API mappings, A2UI/AG-UI responsibilities, acceptance criteria, milestones, and integration gates. Existing decision notes remain supporting history.

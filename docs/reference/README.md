@@ -4,4 +4,4 @@ These documents preserve the reviewed launch specification and selected B design
 
 Issue #13 and the repository README supersede older stack text: this repository is frontend-only, uses Biome exclusively and pins Zod 3.25.76. The original Hono Worker and new health endpoint requirements do not apply. Future API and agent work is separately scoped; endpoint changes belong in `3dprinter-web-api` with its existing health endpoint. Broader launch acceptance criteria are not claimed by this scaffold.
 
-The reference documents describe planned commerce behavior, not functionality available in the current empty surface. No reference directory or prototype is needed to install, build, test or run this application.
+The reference documents describe historical plans and broader commerce milestones. See the [current source map](../../README.md#source-map) for implemented storefront, account, recovery and admin draft capabilities. No reference directory or prototype is needed to install, build, test or run this application.
