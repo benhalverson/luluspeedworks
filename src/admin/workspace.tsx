@@ -1,5 +1,6 @@
 import type { A2uiClientAction } from "@a2ui/web_core/v0_9";
 import {
+  skipToken,
   type UseQueryResult,
   useMutation,
   useQuery,
@@ -117,30 +118,54 @@ export function AdminWorkspace() {
 }
 
 function AuthorizedWorkspace({ identity }: { identity: string }) {
+  const client = useQueryClient();
   const [hasVerifiedAccess, setHasVerifiedAccess] = useState(false);
-  const list = useQuery({
+  const { data: list = { drafts: [] } } = useQuery<
+    z.infer<typeof productDraftListSchema>
+  >({
     queryKey: ["admin-drafts", apiOrigin, identity],
-    queryFn: ({ signal }) =>
-      draftRequest("", productDraftListSchema, "GET", undefined, signal),
+    queryFn: skipToken,
+    enabled: false,
+    gcTime: 0,
+  });
+  // Only server verification may grant access; mutation cache writes cannot.
+  const authorization = useQuery({
+    queryKey: ["admin-draft-access", apiOrigin, identity],
+    queryFn: async ({ signal }) => {
+      const result = await draftRequest(
+        "",
+        productDraftListSchema,
+        "GET",
+        undefined,
+        signal,
+      );
+      signal.throwIfAborted();
+      client.setQueryData(["admin-drafts", apiOrigin, identity], result);
+      return result;
+    },
     retry: false,
     staleTime: 0,
     gcTime: 0,
   });
   const status =
-    list.error instanceof DraftRequestError ? list.error.status : null;
+    authorization.error instanceof DraftRequestError
+      ? authorization.error.status
+      : null;
   useEffect(() => {
-    if (list.isSuccess && list.isFetchedAfterMount) setHasVerifiedAccess(true);
+    if (authorization.isSuccess && authorization.isFetchedAfterMount)
+      setHasVerifiedAccess(true);
     else if (status === 401 || status === 403) setHasVerifiedAccess(false);
-  }, [list.isSuccess, list.isFetchedAfterMount, status]);
-  if (list.isPending || !list.isFetchedAfterMount)
+  }, [authorization.isSuccess, authorization.isFetchedAfterMount, status]);
+  if (authorization.isPending || !authorization.isFetchedAfterMount)
     return (
       <main className="p-8">
         <p role="status">Checking administrator access…</p>
       </main>
     );
   if (
-    !list.data ||
-    (list.isError && (!hasVerifiedAccess || status === 401 || status === 403))
+    !authorization.data ||
+    (authorization.isError &&
+      (!hasVerifiedAccess || status === 401 || status === 403))
   )
     return (
       <main className="p-8">
@@ -159,14 +184,14 @@ function AuthorizedWorkspace({ identity }: { identity: string }) {
             Sign in
           </Link>
         ) : (
-          <Button onClick={() => void list.refetch()}>
+          <Button onClick={() => void authorization.refetch()}>
             Retry conversations
           </Button>
         )}
       </main>
     );
   return (
-    <Workspace identity={identity} list={list} drafts={list.data.drafts} />
+    <Workspace identity={identity} list={authorization} drafts={list.drafts} />
   );
 }
 

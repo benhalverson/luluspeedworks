@@ -424,6 +424,14 @@ it.each([200, 403, 503])(
     if (status === 200) {
       await ready();
       expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.filter(
+            ([input]) =>
+              new URL(String(input)).pathname === "/admin/product-drafts",
+          ),
+      ).toHaveLength(1);
+      expect(
         screen.getByRole("navigation", { name: "Admin navigation" }),
       ).toBeVisible();
     } else {
@@ -436,18 +444,35 @@ it.each([200, 403, 503])(
 );
 
 it.each([401, 403])(
-  "removes an open workspace when authorization is revoked with %s",
+  "keeps access denied after a delayed save completes following %s revocation",
   async (status) => {
     const client = testClient();
     renderWithClient(<App />, client);
     await ready();
+    let resolveSave: ((response: Response) => void) | undefined;
+    override = (_url, init) =>
+      init?.method === "PUT"
+        ? new Promise<Response>((resolve) => {
+            resolveSave = resolve;
+          })
+        : undefined;
+    click("Edit draft facts");
+    fireEvent.change(screen.getByLabelText("Product name"), {
+      target: { value: "Private delayed save" },
+    });
+    click("Save draft answers");
+    await waitFor(() => expect(resolveSave).toBeDefined());
     override = (url) =>
       url.pathname === "/admin/product-drafts"
         ? Response.json({ error: "Denied" }, { status })
         : undefined;
     await act(() =>
       client.invalidateQueries({
-        queryKey: ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+        queryKey: [
+          "admin-draft-access",
+          "https://api.benhalverson.dev",
+          "admin",
+        ],
         exact: true,
       }),
     );
@@ -457,13 +482,43 @@ it.each([401, 403])(
     ).toBeNull();
     expect(screen.queryByRole("button", { name: "+ New product" })).toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
+    const saved = draft({
+      revision: 2,
+      state: {
+        answers: { name: "Private delayed save" },
+        history: [],
+        pendingQuestions: [],
+      },
+    });
+    drafts = [saved];
+    await act(() => required(resolveSave)(Response.json(saved)));
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+    expect(
+      screen.queryByRole("navigation", { name: "Admin navigation" }),
+    ).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(screen.queryByRole("button", { name: "+ New product" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Edit draft facts" }),
+    ).toBeNull();
+    expect(screen.queryByLabelText("Product notes")).toBeNull();
+    expect(screen.queryByText("Private delayed save")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      status === 401
+        ? "Your session has expired"
+        : "Administrator access is required",
+    );
     override = (url) =>
       url.pathname === "/admin/product-drafts"
         ? Response.json({}, { status: 503 })
         : undefined;
     await act(() =>
       client.invalidateQueries({
-        queryKey: ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+        queryKey: [
+          "admin-draft-access",
+          "https://api.benhalverson.dev",
+          "admin",
+        ],
         exact: true,
       }),
     );
@@ -476,6 +531,54 @@ it.each([401, 403])(
     await ready();
   },
 );
+
+it("requires fresh authorization on route re-entry despite an earlier pending save", async () => {
+  const client = testClient();
+  const view = renderWithClient(<App />, client);
+  await ready();
+  const payload = client.getQueryData([
+    "admin-drafts",
+    "https://api.benhalverson.dev",
+    "admin",
+  ]);
+  let resolveSave: ((response: Response) => void) | undefined;
+  let resolveAccess: ((response: Response) => void) | undefined;
+  override = (_url, init) =>
+    init?.method === "PUT"
+      ? new Promise<Response>((resolve) => {
+          resolveSave = resolve;
+        })
+      : undefined;
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "Earlier save" },
+  });
+  click("Save draft answers");
+  await waitFor(() => expect(resolveSave).toBeDefined());
+  view.unmount();
+  vi.mocked(fetch).mockClear();
+  override = (url) =>
+    url.pathname === "/admin/product-drafts"
+      ? new Promise<Response>((resolve) => {
+          resolveAccess = resolve;
+        })
+      : undefined;
+  renderWithClient(<App />, client);
+  await waitFor(() => expect(resolveAccess).toBeDefined());
+  await act(() => required(resolveSave)(Response.json(current())));
+  await waitFor(() => expect(client.isMutating()).toBe(0));
+  expect(screen.getByText("Checking administrator access…")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "+ New product" })).toBeNull();
+  expect(screen.queryByRole("complementary")).toBeNull();
+  expect(
+    vi
+      .mocked(fetch)
+      .mock.calls.map(([input]) => new URL(String(input)).pathname),
+  ).toEqual(["/admin/product-drafts"]);
+  override = undefined;
+  await act(() => required(resolveAccess)(Response.json(payload)));
+  await ready();
+});
 
 it("retains authorized edits through a temporary list failure and retries", async () => {
   const client = testClient();
@@ -491,7 +594,7 @@ it("retains authorized edits through a temporary list failure and retries", asyn
       : undefined;
   await act(() =>
     client.invalidateQueries({
-      queryKey: ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+      queryKey: ["admin-draft-access", "https://api.benhalverson.dev", "admin"],
       exact: true,
     }),
   );
@@ -505,6 +608,36 @@ it("retains authorized edits through a temporary list failure and retries", asyn
   expect(screen.getByLabelText("Product name")).toHaveValue(
     "Unsaved product name",
   );
+});
+
+it("ignores an aborted verification response after Strict Mode verifies access again", async () => {
+  const client = testClient();
+  let resolveAborted: ((response: Response) => void) | undefined;
+  let signal: AbortSignal | null | undefined;
+  override = (url, init) => {
+    if (url.pathname === "/admin/product-drafts" && !resolveAborted) {
+      signal = init?.signal;
+      return new Promise<Response>((resolve) => {
+        resolveAborted = resolve;
+      });
+    }
+  };
+  renderWithClient(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+    client,
+  );
+  await ready();
+  expect(signal?.aborted).toBe(true);
+  const listKey = ["admin-drafts", "https://api.benhalverson.dev", "admin"];
+  const verifiedDrafts = client.getQueryData(listKey);
+  expect(verifiedDrafts).toMatchObject({ drafts: [{ id: draftId }] });
+  await act(() => required(resolveAborted)(Response.json({ drafts: [] })));
+  expect(client.getQueryData(listKey)).toEqual(verifiedDrafts);
+  expect(
+    screen.getByRole("button", { name: "Edit draft facts" }),
+  ).toBeVisible();
 });
 
 it("rechecks access when the account changes and hides the workspace on sign-out", async () => {
