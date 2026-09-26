@@ -5,9 +5,20 @@ export class DraftRequestError extends Error {
   constructor(
     public status: number,
     message: string,
+    public source: "draft" | "transfer" = "draft",
   ) {
     super(message);
   }
+}
+
+export function isAuthorizationFailure(
+  error: unknown,
+): error is DraftRequestError {
+  return (
+    error instanceof DraftRequestError &&
+    error.source === "draft" &&
+    (error.status === 401 || error.status === 403)
+  );
 }
 
 export async function draftRequest<T>(

@@ -30,6 +30,8 @@
     "test": "vitest run",
     "test:ci": "pnpm check",
     "test:coverage": "vitest run --coverage",
+    "test:links": "vitest run test/documentation.test.ts",
+    "test:smoke": "playwright test",
     "build": "vite build",
     "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build"
   },
@@ -58,6 +60,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",

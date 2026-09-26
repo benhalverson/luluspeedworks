@@ -11,7 +11,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 import type { CartSnapshot } from "../src/storefront/cart";
 import { apiPage, categories, product } from "./catalog-fixtures";
-import { renderWithClient } from "./query-client";
+import { renderWithClient, testClient } from "./query-client";
 
 const session = vi.hoisted(() => ({
   data: null as { user: { id: string; email: string } } | null,
@@ -123,6 +123,91 @@ function save(pending = false) {
     }),
   );
 }
+
+it.each(
+  ["account change", "sign-out", "session refresh", "route re-entry"].flatMap(
+    (transition) => [200, 403].map((status) => ({ transition, status })),
+  ),
+)(
+  "keeps a delayed bag $status out of the current UI after $transition",
+  async ({ transition, status }) => {
+    session.data = { user: { id: "alice", email: "alice@example.com" } };
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        cartId,
+        ownerId: "alice",
+        pending: false,
+        revision: crypto.randomUUID(),
+      }),
+    );
+    const original = vi.mocked(fetch).getMockImplementation();
+    if (!original) throw new Error("Expected API fixture");
+    const client = testClient();
+    const view = renderWithClient(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+      client,
+    );
+    await screen.findByRole("button", { name: "Bag (0)" });
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    let finish: ((response: Response) => void) | undefined;
+    let signal: AbortSignal | null | undefined;
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (new URL(String(input)).pathname === `/cart/${cartId}` && !finish) {
+        signal = init?.signal;
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      }
+      return original(input, init);
+    });
+    act(() => {
+      void client.invalidateQueries({
+        queryKey: ["cart", "https://api.benhalverson.dev", "alice"],
+      });
+    });
+    await waitFor(() => expect(finish).toBeDefined());
+    expect(signal?.aborted).toBe(false);
+    if (transition === "route re-entry") {
+      view.unmount();
+      renderWithClient(
+        <StrictMode>
+          <App />
+        </StrictMode>,
+        client,
+      );
+    } else {
+      if (transition === "session refresh") session.isPending = true;
+      else
+        session.data =
+          transition === "sign-out"
+            ? null
+            : { user: { id: "bob", email: "bob@example.com" } };
+      view.rerender(
+        <StrictMode>
+          <App />
+        </StrictMode>,
+      );
+    }
+    await screen.findByRole("button", { name: "Bag (0)" });
+    expect(signal?.aborted).toBe(true);
+    await act(() =>
+      finish?.(
+        Response.json(
+          { items: [{ ...line, name: "Alice private part" }], total: 2.29 },
+          { status },
+        ),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Bag (0)" }));
+    expect(screen.getByRole("dialog", { name: "Your bag" })).toBeVisible();
+    expect(screen.queryByText("Alice private part")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Bag (1)" })).toBeNull();
+    expect(screen.queryByText(/Bag request failed/)).toBeNull();
+  },
+);
 
 it("refreshes the shared bag after restoring a guest cart from the account dialog", async () => {
   session.data = { user: { id: "alice", email: "alice@example.com" } };

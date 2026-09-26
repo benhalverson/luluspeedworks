@@ -86,6 +86,7 @@ export async function transferFile(
       error?.success
         ? error.data.error
         : `Transfer failed (${response.status}). Your saved attachments are retained.`,
+      kind === "photo" ? "draft" : "transfer",
     );
   }
   const result =
