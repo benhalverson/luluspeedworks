@@ -181,12 +181,16 @@ function Storefront() {
     },
   );
   useEffect(() => {
-    const current = createCatalogController((name, context) =>
-      onAction(name, context),
+    const current = createCatalogController(
+      (name, context) => onAction(name, context),
+      origin,
     );
     setController(current);
     return () => current.dispose();
   }, []);
+  useLayoutEffect(() => {
+    controller?.navigate(`${pathname}${search}`);
+  }, [controller, pathname, search]);
   useEffect(() => {
     controller?.publish(snapshot, category, page, status, failed);
   }, [controller, snapshot, category, page, status, failed]);

@@ -82,6 +82,14 @@ Keep the pinned A2UI renderer/core, Zod and wire versions compatible. Dependency
 
 The supplied Lulu logo is embedded losslessly in `public/brand/lulu-logo.svg` as a self-contained PNG-backed SVG. Barlow and Barlow Condensed fonts are bundled through Fontsource. The combined [third-party licenses and notices](public/THIRD_PARTY_LICENSES.txt) ships with the built site at `/THIRD_PARTY_LICENSES.txt`.
 
+## Shopping guidance
+
+The shopping composer uses the API's anonymous `/agent/sessions` and session run/cancel endpoints. Its AG-UI 1.0.0 SSE contract carries the application extension `lulu.a2ui.v1` with validated A2UI v0.9.1 updates. The API contract and fixtures live in [3dprinter-farm's shopping-agent handoff](https://github.com/benhalverson/3dprinter-farm/blob/main/docs/shopping-agent.md).
+
+Only approved product rail, focus, entry and image components are accepted. Direct browsing cancels pending guidance; run identity and UI revision prevent stale updates. Inference failures preserve the last valid display and request text, with explicit resubmission. Guidance is read-only: open a product to choose colors and quantities or add it to the bag. Visits and conversation context stay in memory.
+
+For local integration, run the API on port 8787, then use `VITE_API_ORIGIN=http://localhost:8787 pnpm dev`. The API needs its local `AGENT_NETWORK_SECRET` and `AGENT_ENABLED=true` to exercise real inference. Workers AI still runs on Cloudflare while the application and storage run locally; the API owns budget admission and usage accounting. Production inference remains disabled in the checked-in API configuration. Controlled tests mock inference and do not establish live model behavior.
+
 ## Password recovery
 
 Choose **Forgot password?** in the password sign-in form, or open `/forgot-password` directly. The standalone recovery pages use Lulu’s branding and do not load the catalog. Both routes support direct visits and refreshes through the static host’s SPA fallback.

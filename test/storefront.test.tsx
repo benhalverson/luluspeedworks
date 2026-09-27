@@ -43,7 +43,7 @@ describe("Pit Bench", () => {
       expect(
         screen.getByRole("button", { name: new RegExp(name) }),
       ).toBeDisabled();
-    for (const label of ["Color", "Quantity", "YOUR SHOPPING REQUEST"])
+    for (const label of ["Color", "Quantity"])
       expect(
         screen.getByLabelText(label, { selector: "input" }),
       ).toBeDisabled();
