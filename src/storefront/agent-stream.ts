@@ -6,13 +6,16 @@ import {
   progressSchema,
 } from "./agent-contract";
 
+export type AgentStreamState =
+  | { type: "progress" }
+  | { type: "outcome"; batch?: AgentBatch; reason?: string };
+
 /** Parse bounded AG-UI SSE. Publish only a complete, correlated, validated run. */
-export async function readAgentStream(
+export async function* readAgentStream(
   response: Response,
   expected: { sessionId: string; runId: string; uiRevision: number },
-  progress: () => void,
   signal: AbortSignal,
-): Promise<{ batch?: AgentBatch; reason?: string }> {
+): AsyncGenerator<AgentStreamState> {
   if (
     !response.headers.get("content-type")?.startsWith("text/event-stream") ||
     !response.body
@@ -67,7 +70,7 @@ export async function readAgentStream(
     } else if (event.name === "lulu.progress.v1") {
       match(progressSchema.parse(event.value));
       if (batch || reason) throw new Error("Late progress");
-      progress();
+      return true;
     } else {
       if (batch || reason) throw new Error("Duplicate outcome");
       if (event.name === "lulu.a2ui.v1") {
@@ -93,17 +96,17 @@ export async function readAgentStream(
       buffer = buffer.replaceAll("\r\n", "\n");
       let boundary = buffer.indexOf("\n\n");
       while (boundary !== -1) {
-        frame(buffer.slice(0, boundary));
+        if (frame(buffer.slice(0, boundary))) yield { type: "progress" };
         buffer = buffer.slice(boundary + 2);
         boundary = buffer.indexOf("\n\n");
       }
     }
     buffer += decoder.decode();
     if (buffer.trim() || !finished) throw new Error("Incomplete agent stream");
-    return { batch, reason };
   } finally {
     signal.removeEventListener("abort", abort);
     await reader.cancel();
     reader.releaseLock();
   }
+  yield { type: "outcome", batch, reason };
 }

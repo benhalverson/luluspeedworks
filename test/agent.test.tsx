@@ -1,3 +1,4 @@
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import {
   act,
   fireEvent,
@@ -14,7 +15,7 @@ import { readAgentStream } from "../src/storefront/agent-stream";
 import { createCatalogController } from "../src/storefront/controller";
 import { agentFixture } from "./agent-fixtures";
 import { mockCatalog } from "./catalog-fixtures";
-import { renderWithClient as render } from "./query-client";
+import { renderWithClient as render, testClient } from "./query-client";
 
 const session = {
   sessionId: "73f4ebed-0967-4112-8484-ed0263749e61",
@@ -69,13 +70,14 @@ function response(values: unknown[] = events()) {
     headers: { "Content-Type": "text/event-stream" },
   });
 }
-function parse(value: Response) {
-  return readAgentStream(
+async function parse(value: Response) {
+  for await (const state of readAgentStream(
     value,
     expected,
-    vi.fn(),
     new AbortController().signal,
-  );
+  )) {
+    if (state.type === "outcome") return state;
+  }
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -304,7 +306,7 @@ it("accepts split UTF-8, CRLF frames and SSE comments", async () => {
           headers: { "Content-Type": "text/event-stream" },
         }),
       )
-    ).batch,
+    )?.batch,
   ).toEqual(batchSchema.parse(agentFixture));
 });
 
@@ -408,7 +410,7 @@ it.each(["a", "é", '"'])(
   "bounds serialized history for %s requests and preserves the newest context",
   async (character) => {
     const apply = vi.fn();
-    const agent = createShoppingAgent("http://localhost:8787", {
+    const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
       view: vi.fn(),
       apply,
     });
@@ -434,7 +436,10 @@ it.each(["a", "é", '"'])(
 it("rejects a message exceeding the byte limit without posting a run and allows a shorter retry", async () => {
   const view = vi.fn();
   const apply = vi.fn();
-  const agent = createShoppingAgent("http://localhost:8787", { view, apply });
+  const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
+    view,
+    apply,
+  });
   shoppingFetch();
   await agent.send("\u0000".repeat(8192));
   expect(
@@ -454,7 +459,10 @@ it("rejects a message exceeding the byte limit without posting a run and allows 
 it("expires visits, recovers unauthorized sessions only on explicit retry, and bounds history", async () => {
   const view = vi.fn();
   const apply = vi.fn();
-  const agent = createShoppingAgent("http://localhost:8787", { view, apply });
+  const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
+    view,
+    apply,
+  });
   let fail = false;
   const payloads: { context: unknown[] }[] = [];
   shoppingFetch((body) => {
@@ -485,7 +493,10 @@ it("discards a visit response after navigation, without starting inference", asy
   vi.mocked(fetch).mockReturnValue(pending.promise);
   const view = vi.fn();
   const apply = vi.fn();
-  const agent = createShoppingAgent("http://localhost:8787", { view, apply });
+  const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
+    view,
+    apply,
+  });
   const sending = agent.send("pit tools");
   agent.interrupt();
   pending.resolve(Response.json(session));
@@ -500,7 +511,7 @@ it("discards a visit response after navigation, without starting inference", asy
 
 it("reports failed visit creation and refreshes expired visits on explicit requests", async () => {
   const view = vi.fn();
-  const agent = createShoppingAgent("http://localhost:8787", {
+  const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
     view,
     apply: vi.fn(),
   });
@@ -529,7 +540,7 @@ it("reports failed visit creation and refreshes expired visits on explicit reque
 it("times out a stalled fetch and keeps cancellation failures from affecting browsing", async () => {
   vi.useFakeTimers();
   const view = vi.fn();
-  const agent = createShoppingAgent("http://localhost:8787", {
+  const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
     view,
     apply: vi.fn(),
   });
@@ -585,16 +596,15 @@ it("aborts a stalled stream and handles reader cancellation failure", async () =
   const reading = readAgentStream(
     new Response(body, { headers: { "Content-Type": "text/event-stream" } }),
     expected,
-    vi.fn(),
     abort.signal,
   );
-  const failed = expect(reading).rejects.toThrow();
+  const failed = expect(reading.next()).rejects.toThrow();
   abort.abort();
   await failed;
 });
 
 it("validates dispatched request contexts and preserves work on repeated location publication", async () => {
-  const controller = createCatalogController(vi.fn());
+  const controller = createCatalogController(testClient(), vi.fn());
   const surface = controller.surface;
   if (!surface) throw new Error("Missing surface");
   controller.navigate("/");
@@ -606,3 +616,347 @@ it("validates dispatched request contexts and preserves work on repeated locatio
   expect(fetch).not.toHaveBeenCalled();
   controller.dispose();
 });
+
+it.each(["clean", "trailing event", "truncated frame", "invalid UTF-8"])(
+  "keeps progress busy and publishes only after a %s stream ending",
+  async (ending) => {
+    const client = testClient();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    let run = expected;
+    shoppingFetch((body) => {
+      run = body;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller;
+            controller.enqueue(
+              new TextEncoder().encode(sse(events(body).slice(0, 2))),
+            );
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
+    });
+    render(<App />, client);
+    await screen.findByText("Part 1");
+    ask();
+    await screen.findByText("Checking the catalog…");
+    const query = client
+      .getQueryCache()
+      .find({ queryKey: ["shopping-stream"], exact: false });
+    expect(query?.state).toMatchObject({
+      status: "success",
+      fetchStatus: "fetching",
+      data: { type: "progress" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Send shopping request" }),
+    ).toBeDisabled();
+    await act(async () => {
+      stream.enqueue(new TextEncoder().encode(sse(events(run).slice(2))));
+    });
+    expect(
+      screen.queryByRole("link", { name: "Pit tray" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Send shopping request" }),
+    ).toBeDisabled();
+    await act(async () => {
+      if (ending === "trailing event")
+        stream.enqueue(new TextEncoder().encode(sse([events(run)[1]])));
+      if (ending === "truncated frame")
+        stream.enqueue(new TextEncoder().encode("data:"));
+      if (ending === "invalid UTF-8") stream.enqueue(Uint8Array.of(0xc3));
+      stream.close();
+    });
+    if (ending === "clean")
+      await screen.findByRole("link", { name: "Pit tray" });
+    else {
+      await screen.findByText(/Shopping guidance is unavailable/);
+      expect(screen.getByRole("link", { name: "Part 1" })).toBeVisible();
+      expect(
+        screen.queryByRole("link", { name: "Pit tray" }),
+      ).not.toBeInTheDocument();
+    }
+    expect(
+      client.getQueryCache().findAll({ queryKey: ["shopping-stream"] }),
+    ).toHaveLength(0);
+    expect(query?.getObserversCount()).toBe(0);
+  },
+);
+
+it.each(["client", "button", "timeout"])(
+  "%s cancellation aborts transport and leaves catalog and cart queries running",
+  async (source) => {
+    const client = testClient();
+    const other = deferred<string>();
+    const signals: AbortSignal[] = [];
+    const reads = ["catalog", "cart"].map((name) =>
+      client.fetchQuery({
+        queryKey: [name, "pending"],
+        queryFn: ({ signal }) => {
+          signals.push(signal);
+          return other.promise;
+        },
+      }),
+    );
+    const pending = deferred<Response>();
+    const apply = vi.fn();
+    const view = vi.fn();
+    let run = expected;
+    shoppingFetch((body) => {
+      run = body;
+      return pending.promise;
+    });
+    const agent = createShoppingAgent(client, "http://localhost:8787", {
+      view,
+      apply,
+    });
+    if (source === "timeout") vi.useFakeTimers();
+    const sending = agent.send("private shopping message");
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    const query = client
+      .getQueryCache()
+      .find({ queryKey: ["shopping-stream"], exact: false });
+    if (!query) throw new Error("Missing stream query");
+    const signal = vi.mocked(fetch).mock.calls[1]?.[1]?.signal;
+    expect(signal?.aborted).toBe(false);
+    expect(JSON.stringify(query.queryKey)).not.toMatch(/private|capability/);
+    if (source === "client")
+      await client.cancelQueries({ queryKey: query.queryKey, exact: true });
+    if (source === "button") agent.cancel();
+    if (source === "timeout") {
+      await vi.advanceTimersByTimeAsync(35_000);
+      vi.useRealTimers();
+    }
+    await sending;
+    expect(signal?.aborted).toBe(true);
+    expect(signals.every((signal) => !signal.aborted)).toBe(true);
+    expect(
+      client.getQueryCache().findAll({ queryKey: ["shopping-stream"] }),
+    ).toHaveLength(0);
+    expect(query.getObserversCount()).toBe(0);
+    expect(view).toHaveBeenLastCalledWith(
+      expect.objectContaining({ busy: false }),
+    );
+    const lastView = view.mock.calls.length;
+    pending.resolve(response(events(run)));
+    await vi.waitFor(() => expect(apply).not.toHaveBeenCalled());
+    expect(view).toHaveBeenCalledTimes(lastView);
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([url]) => String(url).endsWith("/cancel")),
+    ).toBe(true);
+    other.resolve("untouched");
+    expect(await Promise.all(reads)).toEqual(["untouched", "untouched"]);
+    agent.dispose();
+  },
+);
+
+it("never repeats inference on focus, reconnect, invalidation or a StrictMode remount", async () => {
+  const client = testClient();
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  let run = expected;
+  shoppingFetch((body) => {
+    run = body;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          stream = controller;
+          controller.enqueue(
+            new TextEncoder().encode(sse(events(body).slice(0, 2))),
+          );
+        },
+      }),
+      { headers: { "Content-Type": "text/event-stream" } },
+    );
+  });
+  const mounted = render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+    client,
+  );
+  await screen.findByText("Part 1");
+  ask();
+  await screen.findByText("Checking the catalog…");
+  const firstKey = client
+    .getQueryCache()
+    .find({ queryKey: ["shopping-stream"], exact: false })?.queryKey;
+  async function automaticTriggers() {
+    await act(async () => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+      await client.invalidateQueries({ refetchType: "all" });
+      await client.refetchQueries({
+        queryKey: ["shopping-stream"],
+        type: "all",
+      });
+    });
+  }
+  const runs = () =>
+    vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => String(url).endsWith("/runs"));
+  await automaticTriggers();
+  expect(runs()).toHaveLength(1);
+  expect(
+    screen.getByRole("button", { name: "Send shopping request" }),
+  ).toBeDisabled();
+  await act(async () => {
+    stream.enqueue(new TextEncoder().encode(sse(events(run).slice(2))));
+    stream.close();
+  });
+  await screen.findByRole("link", { name: "Pit tray" });
+  await automaticTriggers();
+  expect(runs()).toHaveLength(1);
+  mounted.unmount();
+  render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+    client,
+  );
+  await screen.findByText("Part 1");
+  await automaticTriggers();
+  expect(runs()).toHaveLength(1);
+  const next = deferred<Response>();
+  shoppingFetch((body) => {
+    run = body;
+    return next.promise;
+  });
+  ask("new visit");
+  await waitFor(() => expect(runs()).toHaveLength(1));
+  const nextKey = client
+    .getQueryCache()
+    .find({ queryKey: ["shopping-stream"], exact: false })?.queryKey;
+  expect(nextKey?.[1]).not.toBe(firstKey?.[1]);
+  expect(nextKey?.[2]).not.toBe(firstKey?.[2]);
+  await act(async () => next.resolve(response(events(run))));
+  await screen.findByRole("link", { name: "Pit tray" });
+  focusManager.setFocused(undefined);
+});
+
+it.each(["progress", "outcome"])(
+  "does not apply cached %s data when QueryClient cancels the stream",
+  async (stage) => {
+    const client = testClient();
+    const apply = vi.fn();
+    const view = vi.fn();
+    const agent = createShoppingAgent(client, "http://localhost:8787", {
+      apply,
+      view,
+    });
+    shoppingFetch();
+    const unsubscribe = client.getQueryCache().subscribe((event) => {
+      if (
+        event.type === "updated" &&
+        event.action.type === "success" &&
+        event.action.manual &&
+        event.query.state.data?.type === stage
+      ) {
+        void client.cancelQueries({
+          queryKey: event.query.queryKey,
+          exact: true,
+        });
+      }
+    });
+    await agent.send("cancel while streaming");
+    expect(apply).not.toHaveBeenCalled();
+    expect(view).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        busy: false,
+        status: expect.stringContaining("unavailable"),
+      }),
+    );
+    expect(
+      client.getQueryCache().findAll({ queryKey: ["shopping-stream"] }),
+    ).toHaveLength(0);
+    unsubscribe();
+    agent.dispose();
+  },
+);
+
+it.each(["navigation", "reset"])(
+  "does not apply a completed result after %s before its continuation",
+  async (action) => {
+    const client = testClient();
+    const apply = vi.fn();
+    const agent = createShoppingAgent(client, "http://localhost:8787", {
+      apply,
+      view: vi.fn(),
+    });
+    shoppingFetch();
+    const unsubscribe = client.getQueryCache().subscribe((event) => {
+      if (
+        event.type === "updated" &&
+        event.action.type === "success" &&
+        !event.action.manual
+      ) {
+        if (action === "navigation") agent.interrupt();
+        else
+          void client.resetQueries({
+            queryKey: event.query.queryKey,
+            exact: true,
+          });
+      }
+    });
+    await agent.send("superseded result");
+    expect(apply).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).endsWith("/runs")),
+    ).toHaveLength(1);
+    unsubscribe();
+    agent.dispose();
+  },
+);
+
+it.each([200, 410])(
+  "ignores an older run's late %s response after a newer result",
+  async (status) => {
+    const client = testClient();
+    const pending = deferred<Response>();
+    let oldRun = expected;
+    let count = 0;
+    shoppingFetch((body) => {
+      if (count++ === 0) {
+        oldRun = body;
+        return pending.promise;
+      }
+      return response(events(body));
+    });
+    const apply = vi.fn();
+    const view = vi.fn();
+    const agent = createShoppingAgent(client, "http://localhost:8787", {
+      apply,
+      view,
+    });
+    const old = agent.send("old");
+    await vi.waitFor(() => expect(count).toBe(1));
+    await agent.send("new");
+    const latest = apply.mock.calls[0]?.[0];
+    pending.resolve(
+      status === 200
+        ? response(events(oldRun))
+        : new Response(null, { status }),
+    );
+    await old;
+    await agent.send("next");
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(latest.runId).not.toBe(oldRun.runId);
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).endsWith("/sessions")),
+    ).toHaveLength(1);
+    expect(
+      client.getQueryCache().findAll({ queryKey: ["shopping-stream"] }),
+    ).toHaveLength(0);
+    agent.dispose();
+  },
+);

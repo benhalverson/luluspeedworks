@@ -3,6 +3,7 @@ import {
   type A2uiMessage,
   MessageProcessor,
 } from "@a2ui/web_core/v0_9";
+import type { QueryClient } from "@tanstack/react-query";
 import { createShoppingAgent } from "./agent";
 import { requestSchema } from "./agent-contract";
 import type { CatalogSnapshot } from "./api";
@@ -54,6 +55,7 @@ const prices = new Intl.NumberFormat("en-US", {
 });
 
 export function createCatalogController(
+  client: QueryClient,
   onAction: (name: string, context: A2uiClientAction["context"]) => void,
   origin = "https://api.benhalverson.dev",
 ) {
@@ -74,7 +76,7 @@ export function createCatalogController(
   processor.processMessages(structuredClone(initialMessages));
   let composed = false;
   let location = "";
-  const agent = createShoppingAgent(origin, {
+  const agent = createShoppingAgent(client, origin, {
     view(value) {
       processor.processMessages([
         {
