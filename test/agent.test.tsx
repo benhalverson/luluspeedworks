@@ -70,14 +70,13 @@ function response(values: unknown[] = events()) {
     headers: { "Content-Type": "text/event-stream" },
   });
 }
-async function parse(value: Response) {
-  for await (const state of readAgentStream(
+function parse(value: Response) {
+  return readAgentStream(
     value,
     expected,
     new AbortController().signal,
-  )) {
-    if (state.type === "outcome") return state;
-  }
+    vi.fn(),
+  );
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -597,8 +596,9 @@ it("aborts a stalled stream and handles reader cancellation failure", async () =
     new Response(body, { headers: { "Content-Type": "text/event-stream" } }),
     expected,
     abort.signal,
+    vi.fn(),
   );
-  const failed = expect(reading.next()).rejects.toThrow();
+  const failed = expect(reading).rejects.toThrow();
   abort.abort();
   await failed;
 });
@@ -645,9 +645,9 @@ it.each(["clean", "trailing event", "truncated frame", "invalid UTF-8"])(
       .getQueryCache()
       .find({ queryKey: ["shopping-stream"], exact: false });
     expect(query?.state).toMatchObject({
-      status: "success",
+      status: "pending",
       fetchStatus: "fetching",
-      data: { type: "progress" },
+      data: undefined,
     });
     expect(
       screen.getByRole("button", { name: "Send shopping request" }),
@@ -841,7 +841,7 @@ it("never repeats inference on focus, reconnect, invalidation or a StrictMode re
 });
 
 it.each(["progress", "outcome"])(
-  "does not apply cached %s data when QueryClient cancels the stream",
+  "cancels the SSE reader after %s without caching or applying a partial result",
   async (stage) => {
     const client = testClient();
     const apply = vi.fn();
@@ -850,21 +850,41 @@ it.each(["progress", "outcome"])(
       apply,
       view,
     });
-    shoppingFetch();
-    const unsubscribe = client.getQueryCache().subscribe((event) => {
-      if (
-        event.type === "updated" &&
-        event.action.type === "success" &&
-        event.action.manual &&
-        event.query.state.data?.type === stage
-      ) {
-        void client.cancelQueries({
-          queryKey: event.query.queryKey,
-          exact: true,
-        });
-      }
+    const cancelled = vi.fn();
+    shoppingFetch((body) => {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                sse(
+                  stage === "progress"
+                    ? events(body).slice(0, 2)
+                    : events(body),
+                ),
+              ),
+            );
+          },
+          cancel: cancelled,
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
     });
-    await agent.send("cancel while streaming");
+    const sending = agent.send("cancel while streaming");
+    await vi.waitFor(() =>
+      expect(view).toHaveBeenCalledWith({
+        busy: true,
+        status: "Checking the catalog…",
+      }),
+    );
+    const query = client
+      .getQueryCache()
+      .find({ queryKey: ["shopping-stream"], exact: false });
+    if (!query) throw new Error("Missing stream query");
+    expect(query.state.data).toBeUndefined();
+    await client.cancelQueries({ queryKey: query.queryKey, exact: true });
+    await sending;
+    expect(cancelled).toHaveBeenCalledTimes(1);
     expect(apply).not.toHaveBeenCalled();
     expect(view).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -875,7 +895,6 @@ it.each(["progress", "outcome"])(
     expect(
       client.getQueryCache().findAll({ queryKey: ["shopping-stream"] }),
     ).toHaveLength(0);
-    unsubscribe();
     agent.dispose();
   },
 );

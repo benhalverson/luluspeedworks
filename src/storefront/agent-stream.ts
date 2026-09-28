@@ -6,16 +6,13 @@ import {
   progressSchema,
 } from "./agent-contract";
 
-export type AgentStreamState =
-  | { type: "progress" }
-  | { type: "outcome"; batch?: AgentBatch; reason?: string };
-
 /** Parse bounded AG-UI SSE. Publish only a complete, correlated, validated run. */
-export async function* readAgentStream(
+export async function readAgentStream(
   response: Response,
   expected: { sessionId: string; runId: string; uiRevision: number },
   signal: AbortSignal,
-): AsyncGenerator<AgentStreamState> {
+  progress: () => void,
+): Promise<{ batch?: AgentBatch; reason?: string }> {
   if (
     !response.headers.get("content-type")?.startsWith("text/event-stream") ||
     !response.body
@@ -70,7 +67,7 @@ export async function* readAgentStream(
     } else if (event.name === "lulu.progress.v1") {
       match(progressSchema.parse(event.value));
       if (batch || reason) throw new Error("Late progress");
-      return true;
+      progress();
     } else {
       if (batch || reason) throw new Error("Duplicate outcome");
       if (event.name === "lulu.a2ui.v1") {
@@ -96,7 +93,7 @@ export async function* readAgentStream(
       buffer = buffer.replaceAll("\r\n", "\n");
       let boundary = buffer.indexOf("\n\n");
       while (boundary !== -1) {
-        if (frame(buffer.slice(0, boundary))) yield { type: "progress" };
+        frame(buffer.slice(0, boundary));
         buffer = buffer.slice(boundary + 2);
         boundary = buffer.indexOf("\n\n");
       }
@@ -108,5 +105,5 @@ export async function* readAgentStream(
     await reader.cancel();
     reader.releaseLock();
   }
-  yield { type: "outcome", batch, reason };
+  return { batch, reason };
 }
