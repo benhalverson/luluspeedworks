@@ -37,6 +37,12 @@ export const initialMessages: A2uiMessage[] = [
         title: "Your bench awaits.",
         description: "No product selected. There’s room for your next project.",
         rail: loadingRail,
+        agent: {
+          active: false,
+          busy: false,
+          status:
+            "Ask about products. Choose colors and add to your bag using the product controls.",
+        },
         detail: emptyDetail,
         cart: {
           count: 0,
@@ -107,6 +113,7 @@ export const initialMessages: A2uiMessage[] = [
           description: { path: "/description" },
           selectedTitle: { path: "/detail/title" },
           selectedDescription: { path: "/detail/description" },
+          href: "",
           active: { path: "/detail/active" },
           ready: { path: "/detail/ready" },
           price: { path: "/detail/price" },
@@ -132,6 +139,7 @@ export const initialMessages: A2uiMessage[] = [
           id: "configuration",
           component: "Configuration",
           productId: { path: "/detail/productId" },
+          guidance: { path: "/agent/active" },
           material: { path: "/detail/material" },
           ready: { path: "/detail/ready" },
           colorsReady: { path: "/detail/colorsReady" },
@@ -145,7 +153,12 @@ export const initialMessages: A2uiMessage[] = [
           retryVisible: { path: "/detail/colorsRetry" },
           retry: { event: { name: "retry-colors" } },
         },
-        { id: "composer", component: "ShoppingComposer" },
+        {
+          id: "composer",
+          component: "ShoppingComposer",
+          busy: { path: "/agent/busy" },
+          status: { path: "/agent/status" },
+        },
         {
           id: "bag",
           component: "CartPanel",

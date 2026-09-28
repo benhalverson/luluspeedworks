@@ -1,5 +1,6 @@
 import { A2uiSurface } from "@a2ui/react/v0_9";
 import type { A2uiClientAction } from "@a2ui/web_core/v0_9";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useEffect,
   useEffectEvent,
@@ -51,6 +52,7 @@ export function App() {
 }
 
 function Storefront() {
+  const client = useQueryClient();
   const origin =
     import.meta.env.VITE_API_ORIGIN || "https://api.benhalverson.dev";
   const { snapshot, status, failed, retry } = useCatalog(origin);
@@ -181,12 +183,17 @@ function Storefront() {
     },
   );
   useEffect(() => {
-    const current = createCatalogController((name, context) =>
-      onAction(name, context),
+    const current = createCatalogController(
+      client,
+      (name, context) => onAction(name, context),
+      origin,
     );
     setController(current);
     return () => current.dispose();
-  }, []);
+  }, [client]);
+  useLayoutEffect(() => {
+    controller?.navigate(`${pathname}${search}`);
+  }, [controller, pathname, search]);
   useEffect(() => {
     controller?.publish(snapshot, category, page, status, failed);
   }, [controller, snapshot, category, page, status, failed]);
