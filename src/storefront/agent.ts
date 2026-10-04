@@ -164,7 +164,7 @@ export function createShoppingAgent(
               )
                 throw new Error("Stale agent status");
               if (status.status !== "running") unresolved = undefined;
-              return { status: status.status };
+              return status;
             }
             const outcome = await readAgentStream(
               response,
@@ -209,7 +209,9 @@ export function createShoppingAgent(
             status:
               outcome.status === "running"
                 ? "Your previous request is still running. Send again to check its status."
-                : "Your previous request has ended. Your browsing is unchanged. Send your request again to start new guidance.",
+                : outcome.status === "fallback"
+                  ? fallbackStatus(outcome.reason)
+                  : "Your previous request has ended. Your browsing is unchanged. Send your request again to start new guidance.",
           });
         } else if (outcome.batch && revision === uiRevision) {
           callbacks.apply(outcome.batch);
@@ -222,12 +224,7 @@ export function createShoppingAgent(
         } else {
           callbacks.view({
             busy: false,
-            status:
-              outcome.reason === "budget_exhausted"
-                ? "Shopping guidance has reached its monthly limit. You can still browse and choose products."
-                : outcome.reason === "rate_limited"
-                  ? "Please wait before asking again. You can still browse products."
-                  : unavailable,
+            status: fallbackStatus(outcome.reason),
           });
         }
       } catch {
@@ -286,4 +283,15 @@ function serializeRequest(
     body = serialize();
   }
   return body;
+}
+
+/** Explain a validated fallback consistently for streamed and recovered runs. */
+function fallbackStatus(reason: string | undefined) {
+  if (reason === "budget_exhausted")
+    return "Shopping guidance has reached its monthly limit. You can still browse and choose products.";
+  if (reason === "accounting_unavailable")
+    return "Shopping guidance is temporarily unavailable. You can still browse products and use your bag. Try your request again later.";
+  if (reason === "rate_limited")
+    return "Please wait before asking again. You can still browse products.";
+  return unavailable;
 }

@@ -127,3 +127,19 @@ After building, `pnpm exec wrangler dev --local` can preview the static hosting 
 - [Review standards](CODING_STANDARDS.md) define cross-module behavior checks.
 
 Reference documents preserve historical plans, not an inventory of completed features. Their earlier Hono/Worker requirements are superseded by this frontend-only repository. Use the source map and current task acceptance criteria for implementation. Test fixtures stay outside runtime code; live commerce, conversational interpretation and deployment require their own scope and verification.
+
+## Inference budget fallback
+
+Budget exhaustion and accounting outages retain the last valid A2UI surface and
+shopping input. Direct catalog browsing and bag controls remain available. Streamed
+fallbacks and recovered terminal run metadata show the same reason-specific state;
+recovery reuses the unresolved run identity and does not automatically start another
+inference run. Retrying requires an explicit shopper action.
+
+The companion API scope ([#193](https://github.com/benhalverson/3dprinter-farm/issues/193))
+owns atomic admission against the $20 UTC-month allowance, conservative reservation
+reconciliation and durable $10/$15/$20 owner alerts. Admission controls are not a
+provider billing guarantee. This frontend does not configure email addresses or
+verify alert delivery. Verified sender, owner recipient and live delivery remain
+operational acceptance gates. Controlled frontend tests do not establish these
+backend/provider outcomes or checkout readiness.
