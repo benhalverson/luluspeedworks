@@ -20,12 +20,17 @@ export function deferred<T>() {
 }
 
 export const test = base.extend<{
-  api: { responses: Map<string, Reply | Promise<Reply>>; requests: string[] };
+  api: {
+    responses: Map<string, Reply | Promise<Reply>>;
+    requests: string[];
+    expectedNetworkErrors: Map<string, string>;
+  };
 }>({
   api: async ({ page }, use) => {
     const responses = new Map<string, Reply | Promise<Reply>>();
     const requests: string[] = [];
     const errors: string[] = [];
+    const expectedNetworkErrors = new Map<string, string>();
     const expectedHttpErrors = new Map<string, number>();
     const current = draft();
     current.state.history = [
@@ -48,6 +53,12 @@ export const test = base.extend<{
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
       if (message.type() !== "error") return;
+      if (
+        expectedNetworkErrors.get(message.location().url) === message.text()
+      ) {
+        expectedNetworkErrors.delete(message.location().url);
+        return;
+      }
       const expected = expectedHttpErrors.get(message.location().url);
       if (
         expected &&
@@ -140,7 +151,11 @@ export const test = base.extend<{
         expectedHttpErrors.set(url.href, reply.status);
       await route.fulfill({ status: reply.status ?? 200, json: reply.body });
     });
-    await use({ responses, requests });
+    await use({ responses, requests, expectedNetworkErrors });
+    expect(
+      expectedNetworkErrors.size,
+      "Expected network failures occurred",
+    ).toBe(0);
     expect(
       errors,
       "Unexpected browser errors or unmocked network requests",

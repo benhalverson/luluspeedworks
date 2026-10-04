@@ -3,6 +3,9 @@ import {
   type A2uiMessage,
   MessageProcessor,
 } from "@a2ui/web_core/v0_9";
+import type { QueryClient } from "@tanstack/react-query";
+import { createShoppingAgent } from "./agent";
+import { requestSchema } from "./agent-contract";
 import type { CatalogSnapshot } from "./api";
 import { componentCatalog } from "./catalog";
 import {
@@ -51,15 +54,78 @@ const prices = new Intl.NumberFormat("en-US", {
   currency: "USD",
 });
 
+/**
+ * Own the trusted A2UI shell, catalog bindings and one shopping-agent visit.
+ * Direct actions invalidate generated guidance; dispose with the mounted view.
+ */
 export function createCatalogController(
+  client: QueryClient,
   onAction: (name: string, context: A2uiClientAction["context"]) => void,
+  origin = "https://api.benhalverson.dev",
 ) {
   const processor = new MessageProcessor(
     [componentCatalog],
-    (action) => onAction(action.name, action.context),
+    (action) => {
+      if (action.name === "ask-shopping") {
+        const request = requestSchema.safeParse(action.context);
+        if (request.success) void agent.send(request.data.message);
+      } else if (action.name === "cancel-shopping") agent.cancel();
+      else {
+        interact();
+        onAction(action.name, action.context);
+      }
+    },
     { version: wireVersion },
   );
   processor.processMessages(structuredClone(initialMessages));
+  let composed = false;
+  let location = "";
+  const agent = createShoppingAgent(client, origin, {
+    /** Publish agent status without allowing model data to replace shell controls. */
+    view(value) {
+      processor.processMessages([
+        {
+          version: wireVersion,
+          updateDataModel: {
+            surfaceId,
+            path: "/agent",
+            value: { ...value, active: composed },
+          },
+        },
+      ]);
+    },
+    /** Apply a validated browse graph atomically, restoring trusted category actions. */
+    apply(batch) {
+      // Keep direct category navigation in the trusted shell. The server may
+      // compose and order the validated browse/focus nodes, never purchase UI.
+      const messages = batch.messages.map((message) => ({
+        ...message,
+        updateComponents: {
+          ...message.updateComponents,
+          components: message.updateComponents.components.map((node) =>
+            node.component === "ProductRail"
+              ? {
+                  ...node,
+                  controls: ["category-all", "category-rc", "category-pit"],
+                }
+              : node,
+          ),
+        },
+      }));
+      processor.processMessages(messages);
+      composed = true;
+    },
+  });
+  /** Cancel guidance and restore deterministic browsing before a direct action. */
+  function interact() {
+    const restore = composed;
+    composed = false;
+    agent.interrupt();
+    if (!restore) return;
+    for (const message of initialMessages) {
+      if ("updateComponents" in message) processor.processMessages([message]);
+    }
+  }
 
   function update(
     value: Record<
@@ -129,6 +195,13 @@ export function createCatalogController(
 
   return {
     surface: processor.model.getSurface(surfaceId),
+    interact,
+    /** Invalidate guidance on a route change; same-URL clicks use interact directly. */
+    navigate(next: string) {
+      if (location === next) return;
+      location = next;
+      interact();
+    },
     publishCart(value: import("./cart-view").CartView) {
       processor.processMessages([
         {
@@ -146,7 +219,9 @@ export function createCatalogController(
       ]);
     },
     publish,
+    /** Release agent work and renderer subscriptions owned by this mounted controller. */
     dispose() {
+      agent.dispose();
       processor.model.dispose();
     },
   };

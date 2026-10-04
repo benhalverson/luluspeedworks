@@ -94,17 +94,22 @@ const PitBench = createComponentImplementation(
   ),
 );
 
+/** Keep home navigation authoritative, including clicks on the current URL. */
 const BrandHeader = createComponentImplementation(
   {
     name: "BrandHeader",
     schema: z.object({ count: CommonSchemas.DynamicNumber }),
   },
-  ({ props }) => {
+  ({ props, context }) => {
     const location = useLocation();
     const session = authClient.useSession();
     return (
       <header className="flex min-h-22 items-center gap-3 border-b border-border tablet:min-h-26 tablet:gap-4.5 wide:gap-8">
-        <BrandLink />
+        <BrandLink
+          onClick={() =>
+            void context.dispatchAction({ event: { name: "browse-product" } })
+          }
+        />
         <nav
           aria-label="Account and bag"
           className="ml-auto flex items-center gap-2"
@@ -247,6 +252,7 @@ export function ProductImage({ src, name }: { src: string; name: string }) {
   );
 }
 
+/** Render a catalog link that exits guidance before selecting a product. */
 const ProductEntry = createComponentImplementation(
   {
     name: "ProductEntry",
@@ -258,12 +264,15 @@ const ProductEntry = createComponentImplementation(
       href: CommonSchemas.DynamicString,
     }),
   },
-  ({ props }) => (
+  ({ props, context }) => (
     <li className="min-w-0 border-b border-border pb-4 [overflow-wrap:anywhere]">
       <ProductImage key={props.image} src={props.image} name={props.name} />
       <h3 className="mt-2 font-medium">
         <Link
           to={props.href}
+          onClick={() =>
+            void context.dispatchAction({ event: { name: "browse-product" } })
+          }
           className="rounded underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
         >
           {props.name}
@@ -277,6 +286,7 @@ const ProductEntry = createComponentImplementation(
   ),
 );
 
+/** Show read-only product guidance with explicit links to deterministic selection. */
 const ProductFocus = createComponentImplementation(
   {
     name: "ProductFocus",
@@ -285,6 +295,7 @@ const ProductFocus = createComponentImplementation(
       description: CommonSchemas.DynamicString,
       selectedTitle: CommonSchemas.DynamicString,
       selectedDescription: CommonSchemas.DynamicString,
+      href: CommonSchemas.DynamicString,
       active: CommonSchemas.DynamicBoolean,
       ready: CommonSchemas.DynamicBoolean,
       price: CommonSchemas.DynamicString,
@@ -295,7 +306,7 @@ const ProductFocus = createComponentImplementation(
       retry: CommonSchemas.Action,
     }),
   },
-  ({ props, buildChild }) => (
+  ({ props, buildChild, context }) => (
     <section aria-labelledby="focus-title" className="[overflow-wrap:anywhere]">
       <p className="text-[10px] font-semibold leading-normal tracking-[0.14em] text-muted-foreground">
         YOUR NEXT RACE-DAY PROJECT
@@ -323,6 +334,19 @@ const ProductFocus = createComponentImplementation(
                 {props.selectedDescription}
               </p>
               <p className="text-sm text-muted-foreground">SKU: {props.sku}</p>
+              {props.href ? (
+                <Link
+                  className="my-3 block underline"
+                  to={props.href}
+                  onClick={() =>
+                    void context.dispatchAction({
+                      event: { name: "browse-product" },
+                    })
+                  }
+                >
+                  Choose this product
+                </Link>
+              ) : null}
               {props.compatibility ? (
                 <p className="my-3 whitespace-pre-wrap">
                   {props.compatibility}
@@ -336,6 +360,9 @@ const ProductFocus = createComponentImplementation(
           <Link
             className="mt-4 block underline focus-visible:outline-2 focus-visible:outline-ring"
             to="/"
+            onClick={() =>
+              void context.dispatchAction({ event: { name: "browse-product" } })
+            }
           >
             Back to Shop all
           </Link>
@@ -379,11 +406,13 @@ const ProductFocus = createComponentImplementation(
   ),
 );
 
+/** Keep purchase controls tied to direct product selection, never agent focus. */
 const Configuration = createComponentImplementation(
   {
     name: "Configuration",
     schema: z.object({
       productId: CommonSchemas.DynamicNumber,
+      guidance: CommonSchemas.DynamicBoolean,
       material: CommonSchemas.DynamicString,
       ready: CommonSchemas.DynamicBoolean,
       colorsReady: CommonSchemas.DynamicBoolean,
@@ -410,18 +439,24 @@ const Configuration = createComponentImplementation(
         MAKE IT YOURS
       </h2>
       <p className="mt-4.5 mb-2.5 font-display text-[28px] leading-[1.2]">
-        {props.ready ? `Material: ${props.material}` : "No part selected"}
+        {props.ready && !props.guidance
+          ? `Material: ${props.material}`
+          : "No part selected"}
       </p>
       <p className="text-[13px] leading-[1.6] text-muted-foreground">
-        <span aria-live="polite">{props.colorStatus}</span>
+        <span aria-live="polite">
+          {props.guidance
+            ? "Open a product to choose its color and quantity."
+            : props.colorStatus}
+        </span>
       </p>
-      {props.retryVisible ? (
+      {props.retryVisible && !props.guidance ? (
         <Button onClick={props.retry}>Retry colors</Button>
       ) : null}
       <label className="mt-6 mb-2.25 block text-[12px]" htmlFor="color">
         Color
       </label>
-      {props.ready ? (
+      {props.ready && !props.guidance ? (
         <select
           id="color"
           className="w-full min-w-0 rounded border border-input bg-background p-2 text-xs focus-visible:outline-2 focus-visible:outline-ring"
@@ -474,14 +509,14 @@ const Configuration = createComponentImplementation(
             },
           })
         }
-        disabled={!props.ready}
+        disabled={!props.ready || props.guidance}
       />
       <p id="quantity-error" aria-live="polite" className="mt-2 text-sm">
         {props.quantityError}
       </p>
       <Button
         className="mt-7 mb-2.5 w-full justify-between"
-        disabled={props.addDisabled}
+        disabled={props.addDisabled || props.guidance}
         onClick={() =>
           void context.dispatchAction({
             event: {
@@ -535,43 +570,83 @@ const DetailImage = createComponentImplementation(
   ),
 );
 
+/** Retain editable input and dispatch explicit requests; busy runs expose cancellation. */
 const ShoppingComposer = createComponentImplementation(
-  { name: "ShoppingComposer", schema: z.object({}) },
-  () => (
-    <section
-      className="col-span-full pt-0.5 bench:col-span-2 bench:col-start-2"
-      aria-labelledby="composer-title"
-    >
-      <label
-        className="text-[10px] tracking-[0.12em] text-muted-foreground"
-        id="composer-title"
-        htmlFor="shopping-request"
+  {
+    name: "ShoppingComposer",
+    schema: z.object({
+      busy: CommonSchemas.DynamicBoolean,
+      status: CommonSchemas.DynamicString,
+    }),
+  },
+  ({ props, context }) => {
+    const [message, setMessage] = useState("");
+    return (
+      <section
+        className="col-span-full pt-0.5 bench:col-span-2 bench:col-start-2"
+        aria-labelledby="composer-title"
       >
-        YOUR SHOPPING REQUEST
-      </label>
-      <div className="mt-2.5 flex items-center gap-2 rounded-[7px] border border-input bg-muted py-2.25 pr-2.5 pl-3 tablet:gap-3 tablet:pl-4.5">
-        <span className="font-mono text-primary" aria-hidden="true">
-          &gt;_
-        </span>
-        <Input
-          className="border-0 p-0 text-[12px] tablet:text-base"
-          id="shopping-request"
-          placeholder="What are you looking for?"
-          aria-describedby="composer-help"
-          disabled
-        />
-        <Button aria-label="Send shopping request" disabled>
-          ↑
-        </Button>
-      </div>
-      <p
-        className="pt-2.5 text-[11px] text-muted-foreground"
-        id="composer-help"
-      >
-        Shopping requests will be available here when the store opens.
-      </p>
-    </section>
-  ),
+        <label
+          className="text-[10px] tracking-[0.12em] text-muted-foreground"
+          id="composer-title"
+          htmlFor="shopping-request"
+        >
+          YOUR SHOPPING REQUEST
+        </label>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!message.trim() || props.busy) return;
+            void context.dispatchAction({
+              event: { name: "ask-shopping", context: { message } },
+            });
+          }}
+          className="mt-2.5 flex items-center gap-2 rounded-[7px] border border-input bg-muted py-2.25 pr-2.5 pl-3 tablet:gap-3 tablet:pl-4.5"
+        >
+          <span className="font-mono text-primary" aria-hidden="true">
+            &gt;_
+          </span>
+          <Input
+            className="border-0 p-0 text-[12px] tablet:text-base"
+            id="shopping-request"
+            placeholder="What are you looking for?"
+            aria-describedby="composer-help"
+            value={message}
+            maxLength={8192}
+            onChange={(event) => setMessage(event.target.value)}
+          />
+          <Button
+            type="submit"
+            aria-label="Send shopping request"
+            disabled={props.busy || !message.trim()}
+          >
+            ↑
+          </Button>
+        </form>
+        {props.busy ? (
+          <Button
+            className="mt-2"
+            variant="outline"
+            onClick={() =>
+              void context.dispatchAction({
+                event: { name: "cancel-shopping" },
+              })
+            }
+          >
+            Cancel request
+          </Button>
+        ) : null}
+        <p
+          className="pt-2.5 text-[11px] text-muted-foreground"
+          id="composer-help"
+          role="status"
+          aria-live="polite"
+        >
+          {props.status}
+        </p>
+      </section>
+    );
+  },
 );
 
 const CartPanel = createComponentImplementation(
