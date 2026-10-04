@@ -2670,3 +2670,99 @@ it("resolves category names by explicitly selecting an authoritative existing id
     requests.find((request) => request.path.endsWith("/prepare"))?.body,
   ).toMatchObject({ answers: { categoryIds: [1], categoryNames: [] } });
 });
+
+it("does not replace a newer prepared revision with an older in-flight draft read", async () => {
+  const client = testClient();
+  renderWithClient(<App />, client);
+  await ready();
+  const older = structuredClone(current());
+  let release: ((response: Response) => void) | undefined;
+  override = (url, init) =>
+    url.pathname === `/admin/product-drafts/${draftId}` &&
+    (init?.method ?? "GET") === "GET"
+      ? new Promise<Response>((resolve) => {
+          release = resolve;
+        })
+      : undefined;
+  void client.invalidateQueries({
+    queryKey: [
+      "admin-drafts",
+      "https://api.benhalverson.dev",
+      "admin",
+      draftId,
+    ],
+  });
+  await waitFor(() => expect(release).toBeDefined());
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "Newest saved name" },
+  });
+  click("Save draft answers");
+  await settled();
+  expect(current().revision).toBe(2);
+  await act(async () => release?.(Response.json(older)));
+  await waitFor(() =>
+    expect(
+      client.isFetching({
+        queryKey: [
+          "admin-drafts",
+          "https://api.benhalverson.dev",
+          "admin",
+          draftId,
+        ],
+      }),
+    ).toBe(0),
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Newest saved name",
+  );
+});
+
+it("does not replace a newer authoritative read with an older delayed save response", async () => {
+  const client = testClient();
+  renderWithClient(<App />, client);
+  await ready();
+  let release: ((response: Response) => void) | undefined;
+  override = (url, init) =>
+    url.pathname.endsWith("/prepare") && init?.method === "POST"
+      ? new Promise<Response>((resolve) => {
+          release = resolve;
+        })
+      : undefined;
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "My saved revision" },
+  });
+  click("Save draft answers");
+  await waitFor(() => expect(release).toBeDefined());
+  current().revision = 3;
+  current().state.answers.name = "Newest external revision";
+  await act(async () => {
+    await client.invalidateQueries({
+      queryKey: [
+        "admin-drafts",
+        "https://api.benhalverson.dev",
+        "admin",
+        draftId,
+      ],
+    });
+  });
+  await act(async () =>
+    release?.(
+      Response.json(
+        draft({
+          revision: 2,
+          state: {
+            answers: { name: "My saved revision" },
+            history: [],
+            pendingQuestions: [],
+          },
+        }),
+      ),
+    ),
+  );
+  await settled();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Newest external revision",
+  );
+});

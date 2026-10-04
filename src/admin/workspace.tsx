@@ -279,15 +279,18 @@ function Workspace({
   const detail = useQuery({
     queryKey: draftKey,
     enabled: Boolean(id),
+    /** Keep a delayed read from replacing a newer acknowledged draft revision. */
     queryFn: async ({ signal }) => {
       try {
-        return await draftRequest(
+        const result = await draftRequest(
           `/${id}`,
           productDraftResponseSchema,
           "GET",
           undefined,
           signal,
         );
+        const current = client.getQueryData<ProductDraft>(draftKey);
+        return current && current.revision > result.revision ? current : result;
       } catch (error) {
         if (!signal.aborted) stopRecovery(error);
         throw error;
@@ -370,6 +373,8 @@ function Workspace({
   /** Publish results only into the still-authorized mounted workspace. */
   function publish(next: ProductDraft) {
     if (!mounted.current) return;
+    const current = client.getQueryData<ProductDraft>([...key, next.id]);
+    if (current && current.revision > next.revision) return;
     client.setQueryData([...key, next.id], next);
     client.setQueryData(
       key,
