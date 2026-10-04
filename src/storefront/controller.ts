@@ -54,6 +54,10 @@ const prices = new Intl.NumberFormat("en-US", {
   currency: "USD",
 });
 
+/**
+ * Own the trusted A2UI shell, catalog bindings and one shopping-agent visit.
+ * Direct actions invalidate generated guidance; dispose with the mounted view.
+ */
 export function createCatalogController(
   client: QueryClient,
   onAction: (name: string, context: A2uiClientAction["context"]) => void,
@@ -77,6 +81,7 @@ export function createCatalogController(
   let composed = false;
   let location = "";
   const agent = createShoppingAgent(client, origin, {
+    /** Publish agent status without allowing model data to replace shell controls. */
     view(value) {
       processor.processMessages([
         {
@@ -89,6 +94,7 @@ export function createCatalogController(
         },
       ]);
     },
+    /** Apply a validated browse graph atomically, restoring trusted category actions. */
     apply(batch) {
       // Keep direct category navigation in the trusted shell. The server may
       // compose and order the validated browse/focus nodes, never purchase UI.
@@ -110,6 +116,7 @@ export function createCatalogController(
       composed = true;
     },
   });
+  /** Cancel guidance and restore deterministic browsing before a direct action. */
   function interact() {
     const restore = composed;
     composed = false;
@@ -189,6 +196,7 @@ export function createCatalogController(
   return {
     surface: processor.model.getSurface(surfaceId),
     interact,
+    /** Invalidate guidance on a route change; same-URL clicks use interact directly. */
     navigate(next: string) {
       if (location === next) return;
       location = next;
@@ -211,6 +219,7 @@ export function createCatalogController(
       ]);
     },
     publish,
+    /** Release agent work and renderer subscriptions owned by this mounted controller. */
     dispose() {
       agent.dispose();
       processor.model.dispose();

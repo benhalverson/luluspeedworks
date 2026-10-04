@@ -6,7 +6,12 @@ import {
   progressSchema,
 } from "./agent-contract";
 
-/** Parse bounded AG-UI SSE. Publish only a complete, correlated, validated run. */
+/**
+ * Parse at most 64 KiB of AG-UI SSE for the expected session/run/revision.
+ * Reject malformed ordering, correlations or terminal outcomes, including trailing
+ * data. Return a composition only after clean EOF; cancellation releases the reader.
+ * The progress callback reports validated admission and consecutive invocations.
+ */
 export async function readAgentStream(
   response: Response,
   expected: { sessionId: string; runId: string; uiRevision: number },
@@ -19,6 +24,7 @@ export async function readAgentStream(
   )
     throw new Error("Invalid agent stream");
   const reader = response.body.getReader();
+  /** Unblock a pending read when the query is cancelled. */
   const abort = () => {
     void reader.cancel().catch(() => {});
   };
@@ -28,8 +34,10 @@ export async function readAgentStream(
   let size = 0;
   let started = false;
   let finished = false;
+  let invocation = -1;
   let batch: AgentBatch | undefined;
   let reason: string | undefined;
+  /** Reject data belonging to another run or a superseded UI revision. */
   const match = (value: { runId: string; uiRevision: number }) => {
     if (
       value.runId !== expected.runId ||
@@ -37,6 +45,7 @@ export async function readAgentStream(
     )
       throw new Error("Stale agent response");
   };
+  /** Validate one complete frame before advancing the stream state machine. */
   const frame = (raw: string) => {
     const data = raw
       .split("\n")
@@ -59,16 +68,24 @@ export async function readAgentStream(
       if (
         event.threadId !== expected.sessionId ||
         (event.result.status === "completed"
-          ? !batch || reason
+          ? !batch || reason || event.result.reason !== undefined
           : !reason || event.result.reason !== reason)
       )
         throw new Error("Invalid completion");
       finished = true;
     } else if (event.name === "lulu.progress.v1") {
-      match(progressSchema.parse(event.value));
+      const value = progressSchema.parse(event.value);
+      match(value);
+      if (
+        value.invocation !== invocation + 1 ||
+        value.stage !== (invocation === -1 ? "admission" : "inference")
+      )
+        throw new Error("Invalid progress order");
+      invocation = value.invocation;
       if (batch || reason) throw new Error("Late progress");
       progress();
     } else {
+      if (invocation === -1) throw new Error("Missing admission");
       if (batch || reason) throw new Error("Duplicate outcome");
       if (event.name === "lulu.a2ui.v1") {
         batch = batchSchema.parse(event.value);

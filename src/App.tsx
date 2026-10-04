@@ -51,6 +51,7 @@ export function App() {
   );
 }
 
+/** Own catalog, commerce and agent controllers for this route-mounted storefront. */
 function Storefront() {
   const client = useQueryClient();
   const origin =

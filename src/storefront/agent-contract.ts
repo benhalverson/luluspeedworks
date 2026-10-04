@@ -6,6 +6,7 @@ import { surfaceId, wireVersion } from "./messages";
 const text = z.string().max(8192);
 const leafId = z.string().regex(/^agent-[a-z0-9-]{1,40}$/);
 const image = z.union([z.literal(""), z.string().url().startsWith("https://")]);
+/** Permit only the named trusted shell action, without model-provided arguments. */
 const action = <T extends string>(name: T) =>
   z.object({ event: z.object({ name: z.literal(name) }).strict() }).strict();
 const node = z.discriminatedUnion("component", [
@@ -93,38 +94,42 @@ export const batchSchema = z
     limitations: z.array(text).max(8),
   })
   .strict()
-  .superRefine((batch, ctx) => {
-    const nodes = batch.messages.flatMap(
-      (message) => message.updateComponents.components,
-    );
-    const byId = new Map(nodes.map((value) => [value.id, value]));
-    const rail = byId.get("products");
-    const focus = byId.get("focus");
-    const used = new Set(["products", "focus"]);
-    let valid =
-      byId.size === nodes.length &&
-      rail?.component === "ProductRail" &&
-      focus?.component === "ProductFocus";
-    for (const value of nodes) {
-      const refs =
-        value.component === "ProductRail"
-          ? value.entries
-          : value.component === "ProductFocus"
-            ? value.images
-            : [];
-      for (const id of refs) {
-        const expected =
-          value.component === "ProductRail" ? "ProductEntry" : "DetailImage";
-        if (used.has(id) || byId.get(id)?.component !== expected) valid = false;
-        used.add(id);
+  .superRefine(
+    /** Reject duplicate, dangling, mistyped or unreachable component references. */
+    (batch, ctx) => {
+      const nodes = batch.messages.flatMap(
+        (message) => message.updateComponents.components,
+      );
+      const byId = new Map(nodes.map((value) => [value.id, value]));
+      const rail = byId.get("products");
+      const focus = byId.get("focus");
+      const used = new Set(["products", "focus"]);
+      let valid =
+        byId.size === nodes.length &&
+        rail?.component === "ProductRail" &&
+        focus?.component === "ProductFocus";
+      for (const value of nodes) {
+        const refs =
+          value.component === "ProductRail"
+            ? value.entries
+            : value.component === "ProductFocus"
+              ? value.images
+              : [];
+        for (const id of refs) {
+          const expected =
+            value.component === "ProductRail" ? "ProductEntry" : "DetailImage";
+          if (used.has(id) || byId.get(id)?.component !== expected)
+            valid = false;
+          used.add(id);
+        }
       }
-    }
-    if (!valid || used.size !== nodes.length)
-      ctx.addIssue({
-        code: "custom",
-        message: "Invalid shopping component graph",
-      });
-  });
+      if (!valid || used.size !== nodes.length)
+        ctx.addIssue({
+          code: "custom",
+          message: "Invalid shopping component graph",
+        });
+    },
+  );
 export type AgentBatch = z.infer<typeof batchSchema>;
 export const fallbackSchema = z.enum([
   "disabled",
@@ -182,3 +187,24 @@ export const progressSchema = z
 export const fallbackEventSchema = z
   .object({ ...correlation, reason: fallbackSchema })
   .strict();
+
+// Duplicate-run replies are metadata only: they never replay a composition.
+export const runStatusSchema = z.discriminatedUnion("status", [
+  z
+    .object({ ...correlation, status: z.literal("running"), reason: z.null() })
+    .strict(),
+  z
+    .object({
+      ...correlation,
+      status: z.literal("completed"),
+      reason: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      ...correlation,
+      status: z.literal("fallback"),
+      reason: fallbackSchema,
+    })
+    .strict(),
+]);

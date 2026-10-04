@@ -44,8 +44,8 @@ function events(run = expected, reason?: string) {
     },
     custom("lulu.progress.v1", {
       ...correlation,
-      stage: "inference",
-      invocation: 1,
+      stage: "admission",
+      invocation: 0,
     }),
     reason
       ? custom("lulu.fallback.v1", { ...correlation, reason })
@@ -967,7 +967,7 @@ it.each([200, 410])(
     await old;
     await agent.send("next");
     expect(apply).toHaveBeenCalledTimes(2);
-    expect(latest.runId).not.toBe(oldRun.runId);
+    expect(latest.runId).toBe(oldRun.runId);
     expect(
       vi
         .mocked(fetch)
@@ -976,6 +976,241 @@ it.each([200, 410])(
     expect(
       client.getQueryCache().findAll({ queryKey: ["shopping-stream"] }),
     ).toHaveLength(0);
+    agent.dispose();
+  },
+);
+
+it.each([
+  ["inference before admission", [{ stage: "inference", invocation: 1 }]],
+  ["inference at zero", [{ stage: "inference", invocation: 0 }]],
+  [
+    "duplicate admission",
+    [
+      { stage: "admission", invocation: 0 },
+      { stage: "admission", invocation: 0 },
+    ],
+  ],
+  [
+    "gap",
+    [
+      { stage: "admission", invocation: 0 },
+      { stage: "inference", invocation: 2 },
+    ],
+  ],
+  [
+    "regression",
+    [
+      { stage: "admission", invocation: 0 },
+      { stage: "inference", invocation: 1 },
+      { stage: "inference", invocation: 1 },
+    ],
+  ],
+  [
+    "wrong stage",
+    [
+      { stage: "admission", invocation: 0 },
+      { stage: "admission", invocation: 1 },
+    ],
+  ],
+  ["missing admission", []],
+])("rejects progress ordering: %s", async (_name, progress) => {
+  const values = events();
+  await expect(
+    parse(
+      response([
+        values[0],
+        ...progress.map((value) =>
+          custom("lulu.progress.v1", {
+            ...expected,
+            ...value,
+            sessionId: undefined,
+          }),
+        ),
+        ...values.slice(2),
+      ]),
+    ),
+  ).rejects.toThrow();
+});
+
+it("accepts consecutive inference progress and rejects a reason on successful completion", async () => {
+  const values = events();
+  const progress = [1, 2, 3].map((invocation) =>
+    custom("lulu.progress.v1", {
+      runId: expected.runId,
+      uiRevision: expected.uiRevision,
+      stage: "inference",
+      invocation,
+    }),
+  );
+  await expect(
+    parse(response([...values.slice(0, 2), ...progress, ...values.slice(2)])),
+  ).resolves.toHaveProperty("batch");
+  const terminal = values[3];
+  await expect(
+    parse(
+      response([
+        ...values.slice(0, 3),
+        {
+          ...terminal,
+          result: {
+            uiRevision: expected.uiRevision,
+            status: "completed",
+            reason: "disabled",
+          },
+        },
+      ]),
+    ),
+  ).rejects.toThrow("Invalid completion");
+});
+
+it.each(["completed", "fallback", "tombstone"])(
+  "recovers %s metadata using the same run before allowing new paid work",
+  async (status) => {
+    const payloads: (typeof expected)[] = [];
+    shoppingFetch((body) => {
+      payloads.push(body);
+      if (payloads.length === 1)
+        return Promise.reject(new Error("lost response"));
+      if (payloads.length === 2)
+        return Response.json({
+          runId: body.runId,
+          uiRevision: body.uiRevision,
+          status: "running",
+          reason: null,
+        });
+      if (payloads.length === 3)
+        return Response.json({
+          runId: body.runId,
+          uiRevision: status === "tombstone" ? 0 : body.uiRevision,
+          status: status === "completed" ? "completed" : "fallback",
+          reason: status === "completed" ? null : "cancelled",
+        });
+      return response(events(body));
+    });
+    const view = vi.fn();
+    const apply = vi.fn();
+    const client = testClient();
+    const agent = createShoppingAgent(client, "http://localhost:8787", {
+      view,
+      apply,
+    });
+    await agent.send("original request");
+    expect(view).toHaveBeenLastCalledWith({
+      busy: false,
+      status: expect.stringContaining("check the previous request"),
+    });
+    await agent.send("edited input");
+    expect(view).toHaveBeenLastCalledWith({
+      busy: false,
+      status: expect.stringContaining("still running"),
+    });
+    await agent.send("edited input");
+    expect(payloads[1]).toEqual(payloads[0]);
+    expect(payloads[2]).toEqual(payloads[0]);
+    expect(apply).not.toHaveBeenCalled();
+    await agent.send("edited input");
+    expect(payloads[3]?.runId).not.toBe(payloads[0]?.runId);
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(
+      client.getQueryCache().findAll({ queryKey: ["shopping-stream"] }),
+    ).toHaveLength(0);
+    agent.dispose();
+  },
+);
+
+it.each(["wrong-run", "wrong-revision", "malformed", "transport"])(
+  "retains unresolved identity on %s recovery failure even after navigation",
+  async (kind) => {
+    const payloads: (typeof expected)[] = [];
+    shoppingFetch((body) => {
+      payloads.push(body);
+      if (payloads.length === 1 || kind === "transport")
+        return Promise.reject(new Error("lost"));
+      return Response.json({
+        runId: kind === "wrong-run" ? crypto.randomUUID() : body.runId,
+        uiRevision: kind === "wrong-revision" ? 99 : body.uiRevision,
+        status: "completed",
+        reason: kind === "malformed" ? "disabled" : null,
+      });
+    });
+    const apply = vi.fn();
+    const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
+      view: vi.fn(),
+      apply,
+    });
+    await agent.send("first");
+    agent.interrupt();
+    await agent.send("second");
+    await agent.send("third");
+    expect(payloads[1]).toEqual(payloads[0]);
+    expect(payloads[2]).toEqual(payloads[0]);
+    expect(apply).not.toHaveBeenCalled();
+    agent.dispose();
+  },
+);
+
+it("does not apply an old recovery stream after navigation", async () => {
+  let count = 0;
+  shoppingFetch((body) =>
+    count++ === 0 ? Promise.reject(new Error("lost")) : response(events(body)),
+  );
+  const apply = vi.fn();
+  const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
+    view: vi.fn(),
+    apply,
+  });
+  await agent.send("first");
+  agent.interrupt();
+  await agent.send("next");
+  expect(apply).not.toHaveBeenCalled();
+  await agent.send("next");
+  expect(apply).toHaveBeenCalledTimes(1);
+  agent.dispose();
+});
+
+it("rejects an unsupported event after valid admission", async () => {
+  await expect(
+    parse(response([...events().slice(0, 2), custom("unsafe", {})])),
+  ).rejects.toThrow("Unsupported agent event");
+});
+
+it("rejects a next-invocation progress event after the outcome", async () => {
+  await expect(
+    parse(
+      response([
+        ...events().slice(0, 3),
+        custom("lulu.progress.v1", {
+          runId: expected.runId,
+          uiRevision: expected.uiRevision,
+          stage: "inference",
+          invocation: 1,
+        }),
+        events()[3],
+      ]),
+    ),
+  ).rejects.toThrow("Late progress");
+});
+
+it.each(["interrupt", "cancel"] as const)(
+  "does not register or post a run after immediate cached-session %s",
+  async (action) => {
+    const payloads: (typeof expected)[] = [];
+    shoppingFetch((body) => {
+      payloads.push(body);
+      return response(events(body));
+    });
+    const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
+      view: vi.fn(),
+      apply: vi.fn(),
+    });
+    await agent.send("establish visit");
+    const pending = agent.send("cancelled request");
+    agent[action]();
+    await pending;
+    expect(payloads).toHaveLength(1);
+    await agent.send("new request");
+    expect(payloads).toHaveLength(2);
+    expect(payloads[1]).toMatchObject({ message: "new request" });
     agent.dispose();
   },
 );

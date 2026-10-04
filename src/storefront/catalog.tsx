@@ -94,6 +94,7 @@ const PitBench = createComponentImplementation(
   ),
 );
 
+/** Keep home navigation authoritative, including clicks on the current URL. */
 const BrandHeader = createComponentImplementation(
   {
     name: "BrandHeader",
@@ -251,6 +252,7 @@ export function ProductImage({ src, name }: { src: string; name: string }) {
   );
 }
 
+/** Render a catalog link that exits guidance before selecting a product. */
 const ProductEntry = createComponentImplementation(
   {
     name: "ProductEntry",
@@ -284,6 +286,7 @@ const ProductEntry = createComponentImplementation(
   ),
 );
 
+/** Show read-only product guidance with explicit links to deterministic selection. */
 const ProductFocus = createComponentImplementation(
   {
     name: "ProductFocus",
@@ -403,6 +406,7 @@ const ProductFocus = createComponentImplementation(
   ),
 );
 
+/** Keep purchase controls tied to direct product selection, never agent focus. */
 const Configuration = createComponentImplementation(
   {
     name: "Configuration",
@@ -442,7 +446,7 @@ const Configuration = createComponentImplementation(
       <p className="text-[13px] leading-[1.6] text-muted-foreground">
         <span aria-live="polite">
           {props.guidance
-            ? "Open a product from these results to choose its color and quantity."
+            ? "Open a product to choose its color and quantity."
             : props.colorStatus}
         </span>
       </p>
@@ -566,6 +570,7 @@ const DetailImage = createComponentImplementation(
   ),
 );
 
+/** Retain editable input and dispatch explicit requests; busy runs expose cancellation. */
 const ShoppingComposer = createComponentImplementation(
   {
     name: "ShoppingComposer",
