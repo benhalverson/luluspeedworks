@@ -82,6 +82,16 @@ Keep the pinned A2UI renderer/core, Zod and wire versions compatible. Dependency
 
 The supplied Lulu logo is embedded losslessly in `public/brand/lulu-logo.svg` as a self-contained PNG-backed SVG. Barlow and Barlow Condensed fonts are bundled through Fontsource. The combined [third-party licenses and notices](public/THIRD_PARTY_LICENSES.txt) ships with the built site at `/THIRD_PARTY_LICENSES.txt`.
 
+## Account and bag handoff
+
+Sign-in, signup, profile and POST signout use the existing Better Auth identity service. The validated local `returnTo` destination survives authentication and explicit bag-restoration retries. Signout and expiry hide private bag data while retaining account-scoped browser pointers; switching accounts and creating another bag preserves the previous account's pointer. Browser storage is an untrusted convenience, never an authorization source.
+
+The companion API work for [#186](https://github.com/benhalverson/3dprinter-web-api/issues/186) supplies durable cart ownership independently of lines. `POST /cart/create` receives `{ expectedUserId: string | null }` and returns `{ cartId, ownerId, guestToken? }`, with a guest capability only for anonymous carts. `POST /cart/:cartId/claim` requires credentials, `X-Cart-Token` and `{ expectedUserId: string }`, returning `{ message, ownerId }`. The expected user is a race-detection assertion checked against the authenticated session, never a client-selected owner. Claim retries are confined to the intended account. Reads and mutations include credentials and the guest capability while needed; successful claims stop sending that capability. The API must independently authorize every cart, shipping and payment-preparation request.
+
+Pending writes retain a durable uncertainty marker and are never automatically retried. Account changes, route teardown and authorization denial invalidate their client continuations without cancelling a server mutation that may already have committed. Reads are disposed through the query signal. Recovery explicitly refreshes the bag before another edit.
+
+The auth-origin companion [#187](https://github.com/benhalverson/3dprinter-web-api/issues/187) must align trusted auth origins, credentialed CORS and private-response caching. Frontend mocked browser tests establish UI behavior only. Chromium and WebKit verification against a non-production API, including actual cookie retention, expiration and cross-user isolation, remains a separate integration gate; CORS alone does not establish that a cross-site cookie is accepted. These changes do not implement checkout or payments.
+
 ## Password recovery
 
 Choose **Forgot password?** in the password sign-in form, or open `/forgot-password` directly. The standalone recovery pages use Lulu’s branding and do not load the catalog. Both routes support direct visits and refreshes through the static host’s SPA fallback.

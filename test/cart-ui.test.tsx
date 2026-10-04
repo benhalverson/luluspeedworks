@@ -92,9 +92,9 @@ beforeEach(() => {
     if (path === "/v2/colors")
       return Response.json({ success: true, data: [color] });
     if (path === "/cart/create")
-      return Response.json({ cartId, guestToken: cartId });
+      return Response.json({ cartId, guestToken: cartId, ownerId: null });
     if (path === `/cart/${cartId}/claim`)
-      return Response.json({ message: "Cart claimed" });
+      return Response.json({ message: "Cart claimed", ownerId: "alice" });
     if (init?.method === "GET")
       return failRead
         ? Response.json({}, { status: 403 })

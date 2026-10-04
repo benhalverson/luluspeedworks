@@ -1,4 +1,5 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { Link } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountPanel } from "../src/storefront/account";
 import { authClient, authenticate } from "../src/storefront/auth";
@@ -91,7 +92,7 @@ it("preserves the guest cart on login and clears private query data", async () =
   vi.mocked(fetch).mockImplementation(async (url, init) => {
     if (String(url).endsWith("/claim")) {
       expect(new Headers(init?.headers).get("X-Cart-Token")).toBe(cartId);
-      return Response.json({ message: "Cart claimed" });
+      return Response.json({ message: "Cart claimed", ownerId: "user-1" });
     }
     return Response.json({ items: [], total: 0 });
   });
@@ -136,7 +137,7 @@ it("clears the failed login message when restoring the guest bag succeeds", asyn
   });
   vi.mocked(fetch).mockImplementation(async (url) =>
     String(url).endsWith("/claim")
-      ? Response.json({ message: "Cart claimed" })
+      ? Response.json({ message: "Cart claimed", ownerId: "user-1" })
       : Response.json({ items: [], total: 0 }),
   );
   vi.mocked(authenticate).mockRejectedValueOnce(
@@ -187,7 +188,7 @@ it("claims the guest bag after verified login even while the session hook refres
   });
   vi.mocked(fetch).mockImplementation(async (url) =>
     String(url).endsWith("/claim")
-      ? Response.json({ message: "Cart claimed" })
+      ? Response.json({ message: "Cart claimed", ownerId: "user-1" })
       : Response.json({ items: [], total: 0 }),
   );
   let completeLogin = () => {};
@@ -241,7 +242,7 @@ it("uses passkeys independently of password validation and shows cancellation fa
   fireEvent.click(screen.getByRole("link", { name: /Already have/ }));
   expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible();
 });
-it("clears browser cart capability on signout and reports signout failure", async () => {
+it("preserves the account-scoped bag on signout and reports signout failure", async () => {
   session.data = { user: { id: "user-1", email: "ben@example.com" } };
   const key = "lulu-cart-v2:https://api.benhalverson.dev";
   const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
@@ -267,7 +268,8 @@ it("clears browser cart capability on signout and reports signout failure", asyn
   await screen.findByText("Sign-out failed. Please try again.");
   expect(localStorage.getItem(key)).toContain(cartId);
   fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
-  await waitFor(() => expect(localStorage.getItem(key)).toBeNull());
+  await waitFor(() => expect(session.refetch).toHaveBeenCalled());
+  expect(localStorage.getItem(key)).toContain(cartId);
 });
 it("can retry an interrupted guest claim after the session is restored", async () => {
   session.data = { user: { id: "user-1", email: "ben@example.com" } };
@@ -295,7 +297,7 @@ it("can retry an interrupted guest claim after the session is restored", async (
     if (String(url).endsWith("/claim"))
       return failClaim
         ? new Response(null, { status: 503 })
-        : Response.json({ message: "claimed" });
+        : Response.json({ message: "claimed", ownerId: "user-1" });
     return Response.json({ items: [], total: 0 });
   });
   renderWithClient(<AccountPanel />);
@@ -353,4 +355,140 @@ it("keeps browsing available while session lookup is pending or unavailable", ()
   expect(
     screen.getByRole("link", { name: "Sign in or create an account" }),
   ).toHaveAttribute("href", "/signin?returnTo=%2F");
+});
+
+it.each(["account", "route", "destination", "unmount"])(
+  "ignores late authentication after a different %s owns the page",
+  async (change) => {
+    window.history.replaceState(null, "", "/signin?returnTo=%2Fcart");
+    let finish!: (user: Awaited<ReturnType<typeof authenticate>>) => void;
+    vi.mocked(authenticate).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const client = testClient();
+    client.setQueryData(["private"], "new owner's cache");
+    const view = renderWithClient(
+      <>
+        <AccountPanel />
+        <Link to="/signin?returnTo=%2Fproducts%2F2">Change destination</Link>
+      </>,
+      client,
+    );
+    await fill();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Sign in with password" }),
+    );
+    await waitFor(() => expect(finish).toBeDefined());
+    if (change === "account") {
+      session.data = { user: { id: "bob", email: "bob@example.com" } };
+      view.rerender(<AccountPanel />);
+    } else if (change === "route") {
+      fireEvent.click(screen.getByRole("link", { name: "Create an account" }));
+    } else if (change === "destination") {
+      fireEvent.click(screen.getByRole("link", { name: "Change destination" }));
+    } else view.unmount();
+    await act(async () =>
+      finish({
+        id: "alice",
+        email: "alice@example.com",
+        name: "Alice",
+        emailVerified: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        client
+          .getMutationCache()
+          .getAll()
+          .some((mutation) => mutation.state.status === "error"),
+      ).toBe(true),
+    );
+    expect(client.getQueryData(["private"])).toBe("new owner's cache");
+    expect(location.pathname).not.toBe("/cart");
+  },
+);
+
+it("allows the expected session transition and preserves the destination after explicit claim retry", async () => {
+  window.history.replaceState(null, "", "/signin?returnTo=%2Fcart");
+  const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
+  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      cartId,
+      guestToken: cartId,
+      ownerId: null,
+      pending: false,
+      revision: crypto.randomUUID(),
+    }),
+  );
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (_key: string, callback: () => Promise<unknown>) =>
+        callback(),
+    },
+  });
+  let fail = true;
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    if (String(url).endsWith("/claim"))
+      return fail
+        ? new Response(null, { status: 503 })
+        : Response.json({ message: "claimed", ownerId: "user-1" });
+    return Response.json({ items: [], total: 0 });
+  });
+  const view = renderWithClient(<AccountPanel />);
+  vi.mocked(authenticate).mockImplementationOnce(async () => {
+    session.data = { user: { id: "user-1", email: "ben@example.com" } };
+    view.rerender(<AccountPanel />);
+    return {
+      ...session.data.user,
+      name: "Ben",
+      emailVerified: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  });
+  await fill();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in with password" }),
+  );
+  await screen.findByText(/Bag request failed \(503\)/);
+  fail = false;
+  fireEvent.click(screen.getByRole("button", { name: "Restore this bag" }));
+  await waitFor(() => expect(location.pathname).toBe("/cart"));
+});
+
+it("recovers from an API-hidden expired cart into signin while retaining the bag and local destination", async () => {
+  window.history.replaceState(null, "", "/signin?returnTo=%2Fcart");
+  session.data = { user: { id: "alice", email: "alice@example.com" } };
+  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  const saved = JSON.stringify({
+    cartId: "8cfbf30a-2995-486e-a1e8-8f7d41488f1e",
+    ownerId: "alice",
+    pending: false,
+    revision: crypto.randomUUID(),
+  });
+  localStorage.setItem(key, saved);
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const view = renderWithClient(<AccountPanel />);
+  session.refetch.mockImplementationOnce(async () => {
+    session.data = null;
+    view.rerender(<AccountPanel />);
+  });
+  await act(async () => finish(new Response(null, { status: 404 })));
+  await screen.findByRole("button", { name: "Sign in with password" });
+  expect(localStorage.getItem(key)).toBe(saved);
+  expect(location.search).toBe("?returnTo=%2Fcart");
 });

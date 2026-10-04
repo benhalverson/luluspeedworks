@@ -12,6 +12,7 @@ import { matchPath, Route, Routes, useLocation } from "react-router";
 import { AdminWorkspace } from "./admin/workspace";
 import { authClient, returnDestination } from "./storefront/auth";
 import { cartActionSchema, useCart } from "./storefront/cart";
+import { useCartSessionRecovery } from "./storefront/cart-session";
 import { cartView } from "./storefront/cart-view";
 import {
   type Category,
@@ -69,6 +70,7 @@ function Storefront() {
   const previousPath = useRef(pathname);
   const selected = useProduct(origin, id);
   const session = authClient.useSession();
+  useCartSessionRecovery(origin, session.refetch);
   const bag = useCart(
     origin,
     session.data?.user?.id ?? null,
