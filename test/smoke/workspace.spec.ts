@@ -43,7 +43,7 @@ for (const status of [401, 403]) {
           window.dispatchEvent(new Event("visibilitychange")),
         );
       } else {
-        api.responses.set(`PUT /admin/product-drafts/${draftId}`, {
+        api.responses.set(`POST /admin/product-drafts/${draftId}/prepare`, {
           status,
           body: {},
         });
@@ -97,10 +97,15 @@ test("a delayed save cannot reopen the workspace after denial", async ({
     .getByLabel("Product name", { exact: true })
     .fill("Delayed private save");
   const save = deferred<{ body: unknown }>();
-  api.responses.set(`PUT /admin/product-drafts/${draftId}`, save.promise);
+  api.responses.set(
+    `POST /admin/product-drafts/${draftId}/prepare`,
+    save.promise,
+  );
   await page.getByRole("button", { name: "Save draft answers" }).click();
   await expect
-    .poll(() => api.requests.includes(`PUT /admin/product-drafts/${draftId}`))
+    .poll(() =>
+      api.requests.includes(`POST /admin/product-drafts/${draftId}/prepare`),
+    )
     .toBe(true);
   api.responses.set("GET /admin/product-drafts", { status: 403, body: {} });
   await page.evaluate(() =>
@@ -110,7 +115,7 @@ test("a delayed save cannot reopen the workspace after denial", async ({
     "Administrator access is required",
   );
   const response = page.waitForResponse(
-    (response) => response.request().method() === "PUT",
+    (response) => response.request().method() === "POST",
   );
   save.resolve({
     body: draft({
@@ -167,5 +172,59 @@ test("storefront account and bag remain dialogs and share admin branding", async
     await page.getByRole("link", { name: "Lulu Speedworks home" }).innerHTML(),
   ).toBe(brand);
   expect(api.requests).toContain("GET /profile");
+  await checkLayout(page);
+});
+
+test("keyboard category entry and complete instructions keep one preparation-only card", async ({
+  page,
+  api,
+}) => {
+  await page.goto("/admin/products");
+  await page.getByRole("button", { name: "Edit draft facts" }).click();
+  await page.getByLabel("Correct a detail").selectOption("categoryNames");
+  const categories = page.getByLabel("Category names (one per line)");
+  await categories.pressSequentially("First category");
+  await categories.press("Enter");
+  await categories.pressSequentially("Second category");
+  await expect(categories).toHaveValue("First category\nSecond category");
+  api.responses.set(`POST /admin/product-drafts/${draftId}/prepare`, {
+    body: draft({
+      revision: 2,
+      state: {
+        answers: {
+          name: "Prepared part",
+          description: "Owner facts",
+          markupPercentage: "50",
+          inPersonPrice: "2.50",
+          categoryNames: ["First category", "Second category"],
+        },
+        history: [
+          { role: "user", content: "Use 50 percent markup" },
+          { role: "assistant", content: "Updated markup only." },
+        ],
+        pendingQuestions: [],
+        interpretation: {
+          intent: "create",
+          status: "prepared",
+          explanation: "Updated markup only.",
+          confirmedCategoryNames: [],
+          proposedCategoryNames: [],
+          productionOptions: [],
+        },
+      },
+    }),
+  });
+  await page
+    .getByLabel("Product notes", { exact: true })
+    .fill("Use 50 percent markup");
+  await page.getByRole("button", { name: "Send instruction" }).click();
+  const card = page.getByRole("region", { name: "Product Card" });
+  await expect(card).toHaveCount(1);
+  await expect(
+    card.getByRole("button", { name: "Create product — unavailable" }),
+  ).toBeDisabled();
+  await expect(page.getByLabel("Product name", { exact: true })).toHaveCount(0);
+  await expect(card).toContainText("Online markup: 50%");
+  await expect(card).toContainText("In-person price: 2.50");
   await checkLayout(page);
 });

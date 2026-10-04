@@ -41,6 +41,10 @@ const fields = [
   "filamentType",
   "color",
   "notes",
+  "markupPercentage",
+  "inPersonPrice",
+  "categoryNames",
+  "categoryIds",
 ] as const;
 const labels = {
   name: "Product name",
@@ -48,6 +52,10 @@ const labels = {
   filamentType: "Material",
   color: "Color",
   notes: "Notes",
+  markupPercentage: "Online markup percentage",
+  inPersonPrice: "In-person price (USD)",
+  categoryNames: "Category names (one per line)",
+  categoryIds: "Existing categories",
 };
 const title = (draft: ProductDraftSummary) =>
   draft.target.kind === "new"
@@ -221,6 +229,7 @@ function AuthorizedWorkspace({ identity }: { identity: string }) {
   );
 }
 
+/** Coordinate one authorized workspace, serialized saves, and per-draft unsaved input. */
 function Workspace({
   identity,
   list,
@@ -297,6 +306,7 @@ function Workspace({
     Record<string, ProductDraftState["answers"]>
   >({});
   const [messages, setMessages] = useState<Record<string, string>>({});
+  const [correction, setCorrection] = useState<string>("name");
   const [editing, setEditing] = useState<string | null>(null);
   const [requestedSelection, setSelection] = useState<Selection>({
     kind: "photo",
@@ -316,7 +326,35 @@ function Workspace({
   });
   const busy = mutation.isPending;
   const disabled = busy || blocked;
-  const answers = draft ? { ...draft.state.answers, ...edits[draft.id] } : {};
+  const known =
+    draft?.context.status === "available" ? draft.context : undefined;
+  const answers = draft
+    ? {
+        ...(known
+          ? {
+              name: known.product.name,
+              description: known.product.description,
+              filamentType: known.product.filamentType,
+              color: known.product.color ?? "",
+              categoryIds: known.categories.map(
+                (category) => category.categoryId,
+              ),
+            }
+          : {}),
+        ...draft.state.answers,
+        ...edits[draft.id],
+      }
+    : {};
+  const serializedAnswers = {
+    ...answers,
+    ...(answers.categoryNames
+      ? {
+          categoryNames: answers.categoryNames
+            .map((name) => name.trim())
+            .filter(Boolean),
+        }
+      : {}),
+  };
   const message = draft ? (messages[draft.id] ?? "") : "";
   useEffect(() => {
     const prevent = (event: BeforeUnloadEvent) => {
@@ -329,7 +367,9 @@ function Workspace({
     return () => window.removeEventListener("beforeunload", prevent);
   }, []);
 
+  /** Publish results only into the still-authorized mounted workspace. */
   function publish(next: ProductDraft) {
+    if (!mounted.current) return;
     client.setQueryData([...key, next.id], next);
     client.setQueryData(
       key,
@@ -404,16 +444,16 @@ function Workspace({
       }
     });
   }
-  async function saveCurrent() {
-    if (!draft || !edits[draft.id]) return;
+  /** Persist direct corrections without inference before moving to another draft. */
+  async function saveCurrent(currentDraft: ProductDraft) {
     const result = await draftRequest(
-      `/${draft.id}`,
+      `/${currentDraft.id}/prepare`,
       productDraftResponseSchema,
-      "PUT",
-      { expectedRevision: draft.revision, state: { ...draft.state, answers } },
+      "POST",
+      { expectedRevision: currentDraft.revision, answers: serializedAnswers },
     );
     publish(result);
-    clearEdits(draft.id);
+    clearEdits(currentDraft.id);
   }
   function clearEdits(draftId: string) {
     setEdits((current) => {
@@ -430,9 +470,10 @@ function Workspace({
     setSelection({ kind: "photo" });
     setNotice("");
   }
+  /** Save dirty answers before opening a separate immutable-target conversation. */
   function open(target: ProductDraftTarget) {
     run(async () => {
-      await saveCurrent();
+      if (draft && edits[draft.id]) await saveCurrent(draft);
       const existing =
         target.kind === "existing"
           ? active.find(
@@ -455,8 +496,43 @@ function Workspace({
       }
     });
   }
+  /** Route validated A2UI actions to the current draft, never to catalog mutations. */
   function cardAction(action: A2uiClientAction) {
     if (!draft || disabled || action.context?.draftId !== draft.id) return;
+    if (action.name === "confirmCategory") {
+      const name = z.string().safeParse(action.context?.name);
+      if (
+        !name.success ||
+        !draft.state.interpretation?.proposedCategoryNames.includes(name.data)
+      )
+        return;
+      run(async () => {
+        const next = await draftRequest(
+          `/${draft.id}/prepare`,
+          productDraftResponseSchema,
+          "POST",
+          {
+            expectedRevision: draft.revision,
+            answers: serializedAnswers,
+            confirmCategoryName: name.data,
+          },
+        );
+        publish(next);
+        clearEdits(draft.id);
+        setNotice(
+          "Category name confirmed for preparation only. No category was created.",
+        );
+      });
+      return;
+    }
+    if (action.name === "correction") {
+      const field = z.enum(fields).safeParse(action.context?.field);
+      if (field.success) {
+        setCorrection(field.data);
+        setEditing(draft.id);
+      }
+      return;
+    }
     if (action.name === "answer") {
       const result = z
         .object({ field: z.enum(fields), value: z.string() })
@@ -466,14 +542,22 @@ function Workspace({
           ...current,
           [draft.id]: {
             ...current[draft.id],
-            [result.data.field]: result.data.value,
+            [result.data.field]:
+              result.data.field === "categoryNames"
+                ? result.data.value.split("\n")
+                : result.data.field === "categoryIds"
+                  ? result.data.value.split(",").filter(Boolean).map(Number)
+                  : result.data.value,
+            ...(result.data.field === "categoryIds"
+              ? { categoryNames: [] }
+              : {}),
           },
         }));
       return;
     }
     if (action.name === "save") {
       run(async () => {
-        await saveCurrent();
+        await saveCurrent(draft);
         setEditing(null);
         setNotice("Draft answers saved. No catalog changes were made.");
       });
@@ -664,6 +748,12 @@ function Workspace({
       );
     }, start.id);
   }
+  const categorySummary = answers.categoryNames?.length
+    ? answers.categoryNames.join(", ")
+    : (answers.categoryIds ?? [])
+        .map((categoryId) => `#${categoryId}`)
+        .join(", ");
+  const interpretation = draft?.state.interpretation;
   const card: CardView | undefined = draft
     ? {
         draftId: draft.id,
@@ -679,12 +769,67 @@ function Workspace({
         status: draft.attachments.validation
           .map((item) => item.message)
           .join(" "),
-        fields: fields.map((field) => ({
-          field,
-          label: labels[field],
-          value: answers[field] ?? "",
-          disabled,
-        })),
+        confirmations: interpretation
+          ? interpretation.proposedCategoryNames.map((name) => ({
+              name,
+              confirmed: interpretation.confirmedCategoryNames.includes(name),
+            }))
+          : [],
+        summary: `${answers.description ?? ""}\nMaterial: ${answers.filamentType || "Not supplied"} · Color: ${answers.color || "Not supplied"}\nCategories: ${categorySummary || "Not supplied"}\n${known ? `Current catalog online price: ${money.format(known.product.price)} · ` : ""}Online markup: ${answers.markupPercentage || "Not supplied"}${answers.markupPercentage ? "%" : ""} · Proposed online price: awaiting server calculation · In-person price: ${answers.inPersonPrice || "Not supplied"}`,
+        actionLabel:
+          draft.target.kind === "new"
+            ? "Create product — unavailable"
+            : "Save changes — unavailable",
+        fields: fields
+          .filter(
+            (field) =>
+              (field === "categoryIds" &&
+                draft.state.pendingQuestions.some(
+                  (question) => question.id === "categoryNames",
+                )) ||
+              draft.state.pendingQuestions.some(
+                (question) => question.id === field,
+              ) ||
+              (editing === draft.id && correction === field) ||
+              field in (edits[draft.id] ?? {}),
+          )
+          .map((field) => ({
+            field,
+            options:
+              field === "categoryIds"
+                ? (catalog.snapshot?.categories ?? []).map((category) => ({
+                    value: String(category.categoryId),
+                    label: `${category.categoryName} (#${category.categoryId})`,
+                  }))
+                : field === "filamentType"
+                  ? [
+                      ...new Set(
+                        draft.state.interpretation?.productionOptions.map(
+                          (option) => option.material,
+                        ) ?? [],
+                      ),
+                    ].map((value) => ({ value, label: value }))
+                  : field === "color"
+                    ? [
+                        ...new Set(
+                          draft.state.interpretation?.productionOptions
+                            .filter(
+                              (option) =>
+                                option.material === answers.filamentType,
+                            )
+                            .map((option) => option.color) ?? [],
+                        ),
+                      ].map((value) => ({ value, label: value }))
+                    : [],
+            label: labels[field],
+            value:
+              field === "categoryNames"
+                ? (answers.categoryNames ?? []).join("\n")
+                : field === "categoryIds"
+                  ? (answers.categoryIds ?? []).join(",")
+                  : (answers[field] ?? ""),
+            disabled,
+          })),
         attachments: [
           ...draft.attachments.photoOrder.flatMap((photoId) =>
             draft.attachments.photos.filter((photo) => photo.id === photoId),
@@ -732,6 +877,7 @@ function Workspace({
     draft &&
     (editing === draft.id ||
       Boolean(edits[draft.id]) ||
+      Boolean(draft.state.interpretation) ||
       draft.state.pendingQuestions.length > 0 ||
       draft.attachments.transfers.some((item) => item.status !== "saved") ||
       draft.attachments.validation.length > 0);
@@ -1059,29 +1205,25 @@ function Workspace({
                       if (!message.trim() || disabled) return;
                       run(async () => {
                         const next = await draftRequest(
-                          `/${draft.id}`,
+                          `/${draft.id}/prepare`,
                           productDraftResponseSchema,
-                          "PUT",
+                          "POST",
                           {
                             expectedRevision: draft.revision,
-                            state: {
-                              ...draft.state,
-                              answers,
-                              history: [
-                                ...draft.state.history,
-                                { role: "user", content: message.trim() },
-                              ],
-                            },
+                            answers: serializedAnswers,
+                            message: message.trim(),
                           },
                         );
                         publish(next);
                         clearEdits(draft.id);
+                        setEditing(null);
                         setMessages((current) => ({
                           ...current,
                           [draft.id]: "",
                         }));
                         setNotice(
-                          "Conversation saved. Product interpretation is not enabled yet.",
+                          next.state.interpretation?.explanation ??
+                            "Draft preparation saved.",
                         );
                       });
                     }}
@@ -1176,7 +1318,7 @@ function Workspace({
                       type="submit"
                       disabled={disabled || !message.trim()}
                     >
-                      Save conversation note
+                      Send instruction
                     </Button>
                   </form>
                   <Button
