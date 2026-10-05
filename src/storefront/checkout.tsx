@@ -6,6 +6,7 @@ import { BrandLink } from "../components/brand-link";
 import { Button } from "../components/ui/button";
 import { apiOrigin, authClient } from "./auth";
 import { useCart } from "./cart";
+import { useCartSessionRecovery } from "./cart-session";
 import { ProfilePanel } from "./profile";
 
 const cents = z.number().int().safe().nonnegative();
@@ -69,6 +70,8 @@ export async function requestQuote(
         : {}),
     },
   );
+  if ([401, 403].includes(response.status))
+    window.dispatchEvent(new Event(`lulu-cart-expired:${apiOrigin}`));
   if (!response.ok)
     throw new Error(
       `Checkout review unavailable (${response.status}). Check your shipping profile and bag, then retry.`,
@@ -240,6 +243,7 @@ function CustomerCheckout({ userId }: { userId: string }) {
 /** Renders the shipping review route only for a currently verified customer session. */
 export function CheckoutPage() {
   const session = authClient.useSession();
+  useCartSessionRecovery(apiOrigin, session.refetch);
   const userId = session.data?.user?.id;
   return (
     <main className="mx-auto max-w-3xl p-6">

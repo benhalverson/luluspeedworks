@@ -51,6 +51,7 @@ const readSchema = storedFields
 const writeSchema = storedFields.extend({ shippingAddress: z.string() });
 type Profile = z.infer<typeof writeSchema>;
 
+/** Reads or saves only the expected account profile and reports expired browser authentication. */
 async function requestProfile(
   userId: string,
   values?: ProfileFields,
@@ -73,6 +74,8 @@ async function requestProfile(
       ),
     },
   );
+  if (result.error && [401, 403].includes(result.error.status))
+    window.dispatchEvent(new Event(`lulu-cart-expired:${apiOrigin}`));
   if (result.error || !result.data)
     throw new Error(
       "Profile unavailable. Check your connection or sign in again.",

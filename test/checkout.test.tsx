@@ -7,6 +7,7 @@ import { renderWithClient, testClient } from "./query-client";
 const session = vi.hoisted(() => ({
   data: { user: { id: "alice" } } as { user: { id: string } } | null,
   isPending: false,
+  refetch: vi.fn(async () => {}),
   error: null as Error | null,
 }));
 vi.mock("../src/storefront/auth", async (original) => {
@@ -22,7 +23,7 @@ vi.mock("../src/storefront/auth", async (original) => {
 });
 const cartId = "11111111-1111-4111-8111-111111111111";
 const quoteId = "22222222-2222-4222-8222-222222222222";
-const key = "lulu-cart-v2:https://api.benhalverson.dev";
+const key = "lulu-cart-v2:https://api.luluspeedworks.com";
 const profile = {
   id: "alice",
   email: "alice@example.com",

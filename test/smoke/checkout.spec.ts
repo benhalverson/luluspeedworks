@@ -100,3 +100,75 @@ test("reviews shipping on production assets and invalidates when the address cha
     fullPage: true,
   });
 });
+
+for (const denial of ["cart", "quote", "profile"] as const) {
+  test(`checkout revalidates the session after ${denial} authorization expires`, async ({
+    page,
+    api,
+  }) => {
+    await page.addInitScript(
+      ({ cartId, quoteId }) =>
+        localStorage.setItem(
+          "lulu-cart-v2:https://api.lulu.test",
+          JSON.stringify({
+            cartId,
+            ownerId: "admin",
+            pending: false,
+            revision: quoteId,
+          }),
+        ),
+      { cartId, quoteId },
+    );
+    api.responses.set(`GET /cart/${cartId}`, {
+      body: { items: [line], total: 2.46 },
+    });
+    await page.goto("/checkout");
+    await expect(
+      page.getByRole("button", { name: "Request a fresh quote" }),
+    ).toBeEnabled();
+    const sessionReads = api.requests.filter(
+      (key) => key === "GET /api/auth/get-session",
+    ).length;
+    api.responses.set("GET /api/auth/get-session", { body: null });
+    if (denial === "quote") {
+      api.responses.set(`POST /cart/${cartId}/quotes`, {
+        status: 401,
+        body: { error: "Unauthorized" },
+      });
+      await page.getByRole("button", { name: "Request a fresh quote" }).click();
+    } else if (denial === "profile") {
+      api.responses.set("POST /profile/admin", {
+        status: 403,
+        body: { error: "Unauthorized" },
+      });
+      await page.getByLabel("City").fill("Salem");
+      await page.getByRole("button", { name: "Save profile" }).click();
+    } else {
+      api.responses.set(`GET /cart/${cartId}`, {
+        status: 404,
+        body: { error: "Cart not found" },
+      });
+      await page.evaluate(() =>
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: "lulu-cart-v2:https://api.lulu.test",
+          }),
+        ),
+      );
+    }
+    await expect(
+      page.getByRole("link", { name: "Sign in to review your checkout" }),
+    ).toBeVisible();
+    expect(
+      api.requests.filter((key) => key === "GET /api/auth/get-session").length,
+    ).toBeGreaterThan(sessionReads);
+    expect(
+      await page.evaluate(() =>
+        JSON.parse(
+          localStorage.getItem("lulu-cart-v2:https://api.lulu.test") ?? "null",
+        ),
+      ),
+    ).toMatchObject({ cartId, ownerId: "admin" });
+    await expect(page.getByText("Total (USD)")).toHaveCount(0);
+  });
+}
