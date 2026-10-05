@@ -13,6 +13,7 @@ import { AdminWorkspace } from "./admin/workspace";
 import { authClient, returnDestination } from "./storefront/auth";
 import { cartActionSchema, useCart } from "./storefront/cart";
 import { cartView } from "./storefront/cart-view";
+import { CheckoutPage } from "./storefront/checkout";
 import {
   type Category,
   createCatalogController,
@@ -32,6 +33,7 @@ import { RecoveryPage } from "./storefront/recovery";
 export function App() {
   return (
     <Routes>
+      <Route path="/checkout" element={<CheckoutPage />} />
       <Route path="/admin/products" element={<AdminWorkspace />} />
       <Route
         path="/forgot-password"

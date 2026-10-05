@@ -1,5 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
@@ -94,7 +95,16 @@ const fields = [
   { name: "phone", label: "Phone", autoComplete: "tel" },
 ] as const;
 
-function ProfileForm({ profile }: { profile: Profile }) {
+/** Edits a saved profile and reports successful saves to the owning checkout visit. */
+function ProfileForm({
+  profile,
+  onSaved,
+  onReady,
+}: {
+  profile: Profile;
+  onSaved?: () => void;
+  onReady?: (ready: boolean) => void;
+}) {
   const {
     register,
     handleSubmit,
@@ -104,10 +114,25 @@ function ProfileForm({ profile }: { profile: Profile }) {
     resolver: zodResolver(profileFields),
     defaultValues: profile,
   });
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
   const save = useMutation({
     retry: false,
     mutationFn: (values: ProfileFields) => requestProfile(profile.id, values),
-    onSuccess: (value) => reset(value),
+    onError: () => {
+      if (active.current) onReady?.(false);
+    },
+    onSuccess: (value) => {
+      if (!active.current) return;
+      reset(value);
+      onSaved?.();
+      onReady?.(true);
+    },
   });
   return (
     <form
@@ -123,6 +148,7 @@ function ProfileForm({ profile }: { profile: Profile }) {
         <div key={field.name} className="grid gap-1">
           <label htmlFor={`profile-${field.name}`}>{field.label}</label>
           <Input
+            disabled={save.isPending}
             id={`profile-${field.name}`}
             autoComplete={field.autoComplete}
             {...register(field.name)}
@@ -151,7 +177,16 @@ function ProfileForm({ profile }: { profile: Profile }) {
   );
 }
 
-export function ProfilePanel({ userId }: { userId: string }) {
+/** Loads only this account’s shipping profile, with explicit save completion. */
+export function ProfilePanel({
+  userId,
+  onSaved,
+  onReady,
+}: {
+  userId: string;
+  onSaved?: () => void;
+  onReady?: (ready: boolean) => void;
+}) {
   const profile = useQuery({
     queryKey: ["profile", apiOrigin, userId],
     queryFn: ({ signal }) => requestProfile(userId, undefined, signal),
@@ -159,6 +194,9 @@ export function ProfilePanel({ userId }: { userId: string }) {
     staleTime: 0,
     gcTime: 0,
   });
+  useEffect(() => {
+    onReady?.(profile.isSuccess && !profile.isFetching);
+  }, [onReady, profile.isSuccess, profile.isFetching]);
   if (profile.isPending) return <p role="status">Loading your profile…</p>;
   if (profile.isError)
     return (
@@ -169,5 +207,12 @@ export function ProfilePanel({ userId }: { userId: string }) {
         </Button>
       </div>
     );
-  return <ProfileForm key={userId} profile={profile.data} />;
+  return (
+    <ProfileForm
+      key={userId}
+      profile={profile.data}
+      onSaved={onSaved}
+      onReady={onReady}
+    />
+  );
 }

@@ -724,6 +724,9 @@ const CartPanel = createComponentImplementation(
         <Dialog.Close asChild>
           <Button className="mt-5 w-full">Continue shopping</Button>
         </Dialog.Close>
+        <Link className="mt-4 block underline" to="/checkout">
+          Review shipping and checkout
+        </Link>
       </section>
     </DialogContent>
   ),

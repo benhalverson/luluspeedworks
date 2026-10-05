@@ -314,6 +314,8 @@ export function useCart(
     cart,
     mutation,
     uncertain: saved?.pending === true,
+    cartId: saved?.cartId,
+    revision: saved?.revision,
     claimable: Boolean(saved?.guestToken && identity !== null),
   };
 }
