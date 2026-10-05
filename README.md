@@ -23,7 +23,7 @@ The public build-time `VITE_API_ORIGIN` defaults to the storefront’s same-site
 
 Changing the API origin selects a separate origin-scoped browser cart and private cache; existing pointers for the previous origin remain stored and are not silently transferred. Existing sessions on another API hostname are not assumed to transfer.
 
-Lulu exposes password authentication; passkey controls appear only on the API’s existing `https://rc-store.benhalverson.dev` passkey origin. The RC relying party and credentials remain unchanged; enabling Lulu passkeys requires a separately agreed configuration. DNS, certificates and API hosting for the configured hostname must be provisioned separately.
+Lulu exposes password authentication; passkey controls appear only on the API’s existing `https://rc-store.benhalverson.dev` passkey origin. RC credentials are bound to that relying party; enabling Lulu passkeys requires a separate relying-party configuration. DNS, certificates and API hosting for the configured hostname must be provisioned separately.
 
 | Command | Purpose |
 | --- | --- |
@@ -90,11 +90,11 @@ The supplied Lulu logo is embedded losslessly in `public/brand/lulu-logo.svg` as
 
 Sign-in, signup, profile and POST signout use the existing Better Auth identity service. The validated local `returnTo` destination survives authentication and explicit bag-restoration retries. Signout and expiry hide private bag data while retaining account-scoped browser pointers; switching accounts and creating another bag preserves the previous account's pointer. Browser storage is an untrusted convenience, never an authorization source.
 
-The companion API work for [#186](https://github.com/benhalverson/3dprinter-web-api/issues/186) supplies durable cart ownership independently of lines. `POST /cart/create` receives `{ expectedUserId: string | null }` and returns `{ cartId, ownerId, guestToken? }`, with a guest capability only for anonymous carts. `POST /cart/:cartId/claim` requires credentials, `X-Cart-Token` and `{ expectedUserId: string }`, returning `{ message, ownerId }`. The expected user is a race-detection assertion checked against the authenticated session, never a client-selected owner. Claim retries are confined to the intended account. Reads and mutations include credentials and the guest capability while needed; successful claims stop sending that capability. The API must independently authorize every cart, shipping and payment-preparation request.
+The API must persist cart ownership independently of lines. `POST /cart/create` receives `{ expectedUserId: string | null }` and returns `{ cartId, ownerId, guestToken? }`, with a guest capability only for anonymous carts. `POST /cart/:cartId/claim` requires credentials, `X-Cart-Token` and `{ expectedUserId: string }`, returning `{ message, ownerId }`. The expected user is a race-detection assertion checked against the authenticated session, never a client-selected owner. Claim retries are confined to the intended account. Reads and mutations include credentials and the guest capability while needed; successful claims stop sending that capability. The API must independently authorize every cart, shipping and payment-preparation request.
 
 Pending writes retain a durable uncertainty marker and are never automatically retried. Account changes, route teardown and authorization denial invalidate their client continuations without cancelling a server mutation that may already have committed. Reads are disposed through the query signal. Recovery explicitly refreshes the bag before another edit.
 
-The auth-origin companion [#187](https://github.com/benhalverson/3dprinter-web-api/issues/187) must align trusted auth origins, credentialed CORS and private-response caching. Frontend mocked browser tests establish UI behavior only. Chromium and WebKit verification against a non-production API, including actual cookie retention, expiration and cross-user isolation, remains a separate integration gate; CORS alone does not establish that a cross-site cookie is accepted. These changes do not implement checkout or payments.
+Configure the API to allow the storefront in both trusted auth origins and credentialed CORS, and disable caching of private responses. Before release, verify cookie retention, expiration and cross-user isolation in Chromium and WebKit against a non-production API. Mocked browser tests establish UI behavior only; CORS alone does not ensure browser acceptance of a cross-site cookie.
 
 ## Password recovery
 
