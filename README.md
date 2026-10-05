@@ -2,7 +2,7 @@
 
 Frontend-only React storefront for physical RC parts and pit tools. The selected **B — Pit Bench** storefront uses the real A2UI renderer with catalog browsing, product configuration, a persistent bag, account dialogs and password recovery. The private **Build Log** workspace provides administrator-authorized product conversations, draft editing and attachment controls.
 
-These are frontend capabilities. Admin conversational interpretation, catalog publication/full CRUD and checkout are not completed by the current workspace. Backend integration and production readiness require separate verification.
+These are frontend capabilities. Admin conversation preparation supports bounded interpretation through the companion API, targeted A2UI questions, direct corrections and explicit category creation after exact-name confirmation. The workspace does not provide catalog publication, full product CRUD or checkout. Backend integration and production readiness require separate verification.
 
 ## Clean-clone setup
 
@@ -64,6 +64,7 @@ Logs are retained in `artifacts/smoke/server.log`; the HTML report is in `artifa
 | Password recovery | [recovery.tsx](src/storefront/recovery.tsx): standalone request/reset routes |
 | Admin access and draft workflow | [workspace.tsx](src/admin/workspace.tsx): identity-scoped verification, separate draft caches, private callbacks and recovery |
 | Draft requests and attachments | [request.ts](src/admin/request.ts), [attachments.ts](src/admin/attachments.ts), [contracts.ts](src/admin/contracts.ts): protected API denial versus external transfer failure |
+| Conversation preparation | `POST /admin/product-drafts/:id/prepare` accepts revision-bound answers and an optional current message. Direct edits omit the message and bypass inference. Read/reload and completeness never execute operations. Exact category confirmation creates or reuses that category through the revision-checked API; the endpoint does not return a proposed online price. |
 | Admin A2UI cards | [card.tsx](src/admin/card.tsx): renderer lifecycle and action bindings |
 | Shared appearance | [brand-link.tsx](src/components/brand-link.tsx), [local controls](src/components/ui), [styles.css](src/styles.css): branding, shadcn controls, theme/base styles |
 | Regression and browser tests | [test/](test), [smoke configuration](playwright.config.ts), [review standards](CODING_STANDARDS.md) |

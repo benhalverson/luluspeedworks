@@ -23,31 +23,90 @@ const Field = createComponentImplementation(
       label: CommonSchemas.DynamicString,
       value: CommonSchemas.DynamicString,
       disabled: CommonSchemas.DynamicBoolean,
+      options: z.array(z.object({ value: z.string(), label: z.string() })),
     }),
   },
+  /** Render only the current question or explicitly selected correction. */
   ({ props, context }) => (
     <label htmlFor={`draft-${props.field}`} className="grid gap-2 text-sm">
       {props.label}
-      <Input
-        id={`draft-${props.field}`}
-        value={props.value}
-        disabled={props.disabled}
-        onChange={(event) =>
-          void context.dispatchAction({
-            event: {
-              name: "answer",
-              context: {
-                draftId: props.draftId,
-                field: props.field,
-                value: event.target.value,
+      {props.options.length ? (
+        <select
+          id={`draft-${props.field}`}
+          className="rounded border border-border bg-background p-2"
+          multiple={props.field === "categoryIds"}
+          value={
+            props.field === "categoryIds" ? props.value.split(",") : props.value
+          }
+          disabled={props.disabled}
+          onChange={(event) =>
+            void context.dispatchAction({
+              event: {
+                name: "answer",
+                context: {
+                  draftId: props.draftId,
+                  field: props.field,
+                  value:
+                    props.field === "categoryIds"
+                      ? Array.from(
+                          event.target.selectedOptions,
+                          (option) => option.value,
+                        ).join(",")
+                      : event.target.value,
+                },
               },
-            },
-          })
-        }
-      />
+            })
+          }
+        >
+          <option value="">Choose an option</option>
+          {props.options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : props.field === "categoryNames" ? (
+        <textarea
+          id={`draft-${props.field}`}
+          className="min-h-20 rounded border border-border bg-background p-2"
+          value={props.value}
+          disabled={props.disabled}
+          onChange={(event) =>
+            void context.dispatchAction({
+              event: {
+                name: "answer",
+                context: {
+                  draftId: props.draftId,
+                  field: props.field,
+                  value: event.target.value,
+                },
+              },
+            })
+          }
+        />
+      ) : (
+        <Input
+          id={`draft-${props.field}`}
+          value={props.value}
+          disabled={props.disabled}
+          onChange={(event) =>
+            void context.dispatchAction({
+              event: {
+                name: "answer",
+                context: {
+                  draftId: props.draftId,
+                  field: props.field,
+                  value: event.target.value,
+                },
+              },
+            })
+          }
+        />
+      )}
     </label>
   ),
 );
+/** Show a private saved photo with an honest failed-preview state. */
 function AttachmentImage({ src, name }: { src: string; name: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (
@@ -167,13 +226,19 @@ const ProductCard = createComponentImplementation(
     schema: z.object({
       draftId: CommonSchemas.DynamicString,
       title: CommonSchemas.DynamicString,
+      summary: CommonSchemas.DynamicString,
+      actionLabel: CommonSchemas.DynamicString,
       fields: CommonSchemas.ChildList,
       attachments: CommonSchemas.ChildList,
+      confirmations: z.array(
+        z.object({ name: z.string(), confirmed: z.boolean() }),
+      ),
       questions: CommonSchemas.DynamicString,
       busy: CommonSchemas.DynamicBoolean,
       status: CommonSchemas.DynamicString,
     }),
   },
+  /** Render the single inline preparation card through approved A2UI bindings. */
   ({ props, buildChild, context }) => (
     <section
       aria-label="Product Card"
@@ -188,6 +253,36 @@ const ProductCard = createComponentImplementation(
       <p className="my-3 whitespace-pre-wrap text-sm text-muted-foreground">
         {props.questions}
       </p>
+      <p className="my-3 text-sm">{props.summary}</p>
+      <label className="my-3 grid gap-2 text-sm">
+        Correct a detail
+        <select
+          className="rounded border border-border bg-background p-2"
+          disabled={props.busy}
+          value=""
+          onChange={(event) =>
+            void context.dispatchAction({
+              event: {
+                name: "correction",
+                context: { draftId: props.draftId, field: event.target.value },
+              },
+            })
+          }
+        >
+          <option value="" disabled>
+            Choose a detail
+          </option>
+          <option value="name">Product name</option>
+          <option value="description">Description</option>
+          <option value="filamentType">Material</option>
+          <option value="color">Color</option>
+          <option value="markupPercentage">Online markup percentage</option>
+          <option value="inPersonPrice">In-person price</option>
+          <option value="categoryNames">Category names</option>
+          <option value="categoryIds">Existing categories</option>
+          <option value="notes">Notes</option>
+        </select>
+      </label>
       <div className="grid gap-4 bench:grid-cols-2">
         {props.fields.map((child) =>
           typeof child === "string"
@@ -205,6 +300,23 @@ const ProductCard = createComponentImplementation(
             : buildChild(child.id, child.basePath),
         )}
       </ul>
+      {props.confirmations.map(({ name, confirmed }) => (
+        <Button
+          key={name}
+          variant="outline"
+          disabled={props.busy || confirmed}
+          onClick={() =>
+            void context.dispatchAction({
+              event: {
+                name: "confirmCategory",
+                context: { draftId: props.draftId, name },
+              },
+            })
+          }
+        >
+          {confirmed ? `Confirmed: ${name}` : `Confirm new category: ${name}`}
+        </Button>
+      ))}
       <p role="status" className="my-3 text-sm">
         {props.status}
       </p>
@@ -218,6 +330,11 @@ const ProductCard = createComponentImplementation(
       >
         Save draft answers
       </Button>
+      <p className="my-3 text-sm text-muted-foreground">
+        Preparation only. Saving answers never creates, publishes, updates or
+        deletes a product.
+      </p>
+      <Button disabled>{props.actionLabel}</Button>
     </section>
   ),
 );
@@ -228,10 +345,19 @@ export const adminCatalog = new Catalog(
 export type CardView = {
   draftId: string;
   title: string;
+  summary: string;
+  actionLabel: string;
+  confirmations: { name: string; confirmed: boolean }[];
   questions: string;
   status: string;
   busy: boolean;
-  fields: { field: string; label: string; value: string; disabled: boolean }[];
+  fields: {
+    field: string;
+    label: string;
+    value: string;
+    disabled: boolean;
+    options: { value: string; label: string }[];
+  }[];
   attachments: {
     id: string;
     name: string;
@@ -246,6 +372,7 @@ export type CardView = {
     resolve: boolean;
   }[];
 };
+/** Own one real A2UI surface and update its bound data in place. */
 export function DraftCard({
   view,
   onAction,
@@ -279,10 +406,13 @@ export function DraftCard({
               component: "ProductCard",
               draftId: { path: "/draftId" },
               title: { path: "/title" },
+              summary: { path: "/summary" },
+              actionLabel: { path: "/actionLabel" },
               questions: { path: "/questions" },
               status: { path: "/status" },
               busy: { path: "/busy" },
               fields: { componentId: "field", path: "/fields" },
+              confirmations: [],
               attachments: { componentId: "attachment", path: "/attachments" },
             },
             {
@@ -293,6 +423,7 @@ export function DraftCard({
               label: { path: "label" },
               value: { path: "value" },
               disabled: { path: "disabled" },
+              options: [],
             },
             {
               id: "attachment",
@@ -323,6 +454,34 @@ export function DraftCard({
   }, []);
   useEffect(() => {
     processor?.processMessages([
+      {
+        version: "v0.9.1",
+        updateComponents: {
+          surfaceId: "draft",
+          components: [
+            {
+              id: "root",
+              component: "ProductCard",
+              draftId: { path: "/draftId" },
+              title: { path: "/title" },
+              summary: { path: "/summary" },
+              actionLabel: { path: "/actionLabel" },
+              questions: { path: "/questions" },
+              status: { path: "/status" },
+              busy: { path: "/busy" },
+              fields: view.fields.map((field) => `field-${field.field}`),
+              attachments: { componentId: "attachment", path: "/attachments" },
+              confirmations: view.confirmations,
+            },
+            ...view.fields.map((field) => ({
+              id: `field-${field.field}`,
+              component: "DraftField",
+              draftId: view.draftId,
+              ...field,
+            })),
+          ],
+        },
+      },
       {
         version: "v0.9.1",
         updateDataModel: { surfaceId: "draft", path: "/", value: view },

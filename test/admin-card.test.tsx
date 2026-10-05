@@ -26,7 +26,10 @@ it("resolves static A2UI child references and sends bound structured actions", (
             component: "ProductCard",
             draftId,
             title: "Static bindings",
-            fields: ["field"],
+            confirmations: [{ name: "Parts", confirmed: true }],
+            summary: "Pricing awaits preparation",
+            actionLabel: "Create product — unavailable",
+            fields: { componentId: "field", path: "/fields" },
             attachments: ["photo"],
             questions: "",
             status: "",
@@ -37,6 +40,7 @@ it("resolves static A2UI child references and sends bound structured actions", (
             component: "DraftField",
             draftId,
             field: "name",
+            options: [],
             label: "Bound name",
             value: "Saved value",
             disabled: false,
@@ -58,6 +62,16 @@ it("resolves static A2UI child references and sends bound structured actions", (
             resolve: false,
           },
         ],
+      },
+    },
+  ]);
+  processor.processMessages([
+    {
+      version: "v0.9.1",
+      updateDataModel: {
+        surfaceId: "static",
+        path: "/",
+        value: { fields: [{}] },
       },
     },
   ]);
