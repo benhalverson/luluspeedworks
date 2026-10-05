@@ -104,9 +104,15 @@ export const test = base.extend<{
           };
         else if (key === "GET /admin/product-drafts")
           reply = { body: draftList(current) };
-        else if (url.pathname === `/admin/product-drafts/${current.id}`) {
-          if (request.method() === "PUT") {
-            current.state = request.postDataJSON().state;
+        else if (
+          url.pathname === `/admin/product-drafts/${current.id}` ||
+          url.pathname === `/admin/product-drafts/${current.id}/prepare`
+        ) {
+          if (
+            request.method() === "POST" &&
+            url.pathname.endsWith("/prepare")
+          ) {
+            current.state.answers = request.postDataJSON().answers;
             current.revision++;
           }
           reply = { body: current };

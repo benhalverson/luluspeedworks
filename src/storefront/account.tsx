@@ -1,8 +1,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { useLocalStorage } from "usehooks-ts";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import {
@@ -15,12 +15,15 @@ import {
   signupFields,
 } from "./auth";
 import { useCart } from "./cart";
-import { AddPasskey } from "./passkey";
+import { useCartSessionRecovery } from "./cart-session";
+import { AddPasskey, supportsPasskeys } from "./passkey";
 import { ProfilePanel } from "./profile";
 
 /** Credentials stay in React Hook Form, outside the A2UI/model data tree. */
 export function AccountPanel() {
   const session = authClient.useSession();
+  const passkeysSupported = supportsPasskeys();
+  useCartSessionRecovery(apiOrigin, session.refetch);
   const user = session.data?.user;
   const bag = useCart(
     apiOrigin,
@@ -31,10 +34,47 @@ export function AccountPanel() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const client = useQueryClient();
-  const [, , removeSavedCart] = useLocalStorage(
-    `lulu-cart-v2:${apiOrigin}`,
-    null,
-  );
+  const visit = useRef(0);
+  const current = useRef({
+    identity: user?.id ?? null,
+    path: location.key,
+    version: 0,
+  });
+  if (
+    current.current.identity !== (user?.id ?? null) ||
+    current.current.path !== location.key
+  )
+    current.current.version += 1;
+  current.current.identity = user?.id ?? null;
+  current.current.path = location.key;
+  useEffect(() => {
+    visit.current += 1;
+    return () => {
+      visit.current += 1;
+    };
+  }, []);
+  /** Bind account continuations to their mounted route and expected account. */
+  function ownOperation() {
+    const mounted = visit.current;
+    const path = location.key;
+    const identity = user?.id ?? null;
+    const version = current.current.version;
+    /** Authentication may establish its verified account, but cannot replace another account. */
+    return (expected: string | null = identity) => {
+      if (
+        visit.current !== mounted ||
+        current.current.path !== path ||
+        (current.current.version !== version &&
+          !(
+            current.current.version === version + 1 &&
+            current.current.identity === expected
+          ))
+      )
+        throw new Error(
+          "Your account changed. Please try again from this page.",
+        );
+    };
+  }
   const mode = location.pathname === "/signup" ? "signup" : "signin";
   const showingForm =
     location.pathname === "/signin" || location.pathname === "/signup";
@@ -50,39 +90,67 @@ export function AccountPanel() {
   });
   const login = useMutation({
     retry: false,
-    mutationFn: ({
+    /** Complete verified authentication and cart handoff only for this account visit. */
+    mutationFn: async ({
       kind,
       values,
     }: {
       kind: "signin" | "signup" | "passkey";
       values: AccountFields;
-    }) => authenticate(kind, values),
-    onSuccess: async (user) => {
+    }) => {
+      const assertOwner = ownOperation();
+      const authenticated = await authenticate(kind, values);
+      assertOwner(authenticated.id);
       await client.cancelQueries();
+      assertOwner(authenticated.id);
       client.clear();
-      await bag.mutation.mutateAsync({ kind: "claim", userId: user.id });
+      await bag.mutation.mutateAsync({
+        kind: "claim",
+        userId: authenticated.id,
+      });
+      assertOwner(authenticated.id);
       reset();
       await session.refetch();
+      assertOwner(authenticated.id);
       navigate(destination, { replace: true });
     },
   });
   const logout = useMutation({
     retry: false,
+    /** Sign out through Better Auth while retaining account-scoped bag restoration hints. */
     mutationFn: async () => {
+      const assertOwner = ownOperation();
       const result = await authClient.signOut();
+      assertOwner(null);
       if (result.error) throw new Error("Sign-out failed. Please try again.");
       await client.cancelQueries();
+      assertOwner(null);
       client.clear();
-      removeSavedCart();
       reset();
       await session.refetch();
+      assertOwner(null);
       navigate("/", { replace: true });
     },
   });
-  const pending = login.isPending || logout.isPending || bag.mutation.isPending;
+  const restore = useMutation({
+    retry: false,
+    /** Retry an uncertain claim and resume the retained local destination. */
+    mutationFn: async (userId: string) => {
+      const assertOwner = ownOperation();
+      await bag.mutation.mutateAsync({ kind: "claim", userId });
+      assertOwner();
+      if (showingForm) navigate(destination, { replace: true });
+    },
+  });
+  const pending =
+    login.isPending ||
+    logout.isPending ||
+    restore.isPending ||
+    bag.mutation.isPending;
   const message =
     login.error?.message ??
     logout.error?.message ??
+    restore.error?.message ??
     bag.mutation.error?.message;
   return (
     <section aria-label="Account" className="min-w-0">
@@ -103,7 +171,7 @@ export function AccountPanel() {
               onClick={() => {
                 login.reset();
                 logout.reset();
-                bag.mutation.mutate({ kind: "claim", userId: user.id });
+                restore.mutate(user.id);
               }}
             >
               Restore this bag
@@ -177,19 +245,21 @@ export function AccountPanel() {
               {mode === "signup" ? "Create account" : "Sign in with password"}
             </Button>
           </form>
-          <Button
-            className="mt-3"
-            variant="outline"
-            disabled={pending}
-            onClick={() =>
-              login.mutate({
-                kind: "passkey",
-                values: { email: "", password: "", name: "" },
-              })
-            }
-          >
-            Sign in with a passkey
-          </Button>
+          {passkeysSupported ? (
+            <Button
+              className="mt-3"
+              variant="outline"
+              disabled={pending}
+              onClick={() =>
+                login.mutate({
+                  kind: "passkey",
+                  values: { email: "", password: "", name: "" },
+                })
+              }
+            >
+              Sign in with a passkey
+            </Button>
+          ) : null}
           <Link
             className="mt-3 block underline"
             to={`${mode === "signup" ? "/signin" : "/signup"}?returnTo=${encodeURIComponent(destination)}`}
@@ -225,10 +295,12 @@ export function AccountPanel() {
       location.pathname === "/profile" ? (
         <div key={user.id}>
           <ProfilePanel userId={user.id} />
-          <div className="mt-6 border-t border-border pt-5">
-            <h2 className="font-display text-2xl">Account security</h2>
-            <AddPasskey />
-          </div>
+          {passkeysSupported ? (
+            <div className="mt-6 border-t border-border pt-5">
+              <h2 className="font-display text-2xl">Account security</h2>
+              <AddPasskey />
+            </div>
+          ) : null}
         </div>
       ) : null}
       {message ? (

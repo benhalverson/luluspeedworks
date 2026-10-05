@@ -3,7 +3,7 @@ import { createAuthClient } from "better-auth/react";
 import { z } from "zod";
 
 export const apiOrigin =
-  import.meta.env.VITE_API_ORIGIN || "https://api.benhalverson.dev";
+  import.meta.env.VITE_API_ORIGIN || "https://api.luluspeedworks.com";
 export const authClient = createAuthClient({
   baseURL: apiOrigin,
   plugins: [passkeyClient()],
@@ -25,7 +25,7 @@ export const signupFields = accountFields.extend({
   password: z.string().min(8, "Use at least 8 characters.").max(128),
 });
 
-// Only known storefront destinations may survive authentication.
+/** Permit only local, known storefront destinations after authentication. */
 export function returnDestination(value: string | null) {
   if (
     !value ||
@@ -37,6 +37,7 @@ export function returnDestination(value: string | null) {
   return value;
 }
 
+/** Verify the cookie-backed session with the existing identity service. */
 export async function confirmSession() {
   const result = await authClient.getSession({
     query: { disableCookieCache: true },
@@ -48,6 +49,7 @@ export async function confirmSession() {
   return result.data.user;
 }
 
+/** Authenticate through Better Auth and verify the resulting session before claiming a bag. */
 export async function authenticate(
   kind: "signin" | "signup" | "passkey",
   values: AccountFields,

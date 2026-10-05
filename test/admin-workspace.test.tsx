@@ -96,9 +96,11 @@ beforeEach(() => {
       return current.status === "active"
         ? Response.json(current)
         : Response.json({ error: "Draft not found" }, { status: 404 });
-    if (method === "PUT") {
+    if (method === "POST" && path.endsWith("/prepare")) {
       current.revision++;
-      current.state = body.state;
+      current.state.answers = { ...current.state.answers, ...body.answers };
+      if (body.message)
+        current.state.history.push({ role: "user", content: body.message });
       return Response.json(current);
     }
     if (method === "PATCH") {
@@ -240,9 +242,9 @@ it("keeps discarded cleanup, active editors and Recent selection together while 
     ),
   );
   expect(screen.getByLabelText("Product notes")).toHaveValue("Unsent note");
-  expect(requests.filter((request) => request.method === "PUT")).toHaveLength(
-    0,
-  );
+  expect(
+    requests.filter((request) => request.path.endsWith("/prepare")),
+  ).toHaveLength(0);
 });
 
 it.each([false, true])(
@@ -398,7 +400,7 @@ it.each([200, 403, 503])(
     } = current();
     const payload = { drafts: [summary] };
     client.setQueryData(
-      ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+      ["admin-drafts", "https://api.luluspeedworks.com", "admin"],
       payload,
     );
     let resolve: ((response: Response) => void) | undefined;
@@ -460,7 +462,8 @@ it.each(
     });
     vi.mocked(fetch).mockClear();
     override = (url) =>
-      url.pathname === `/admin/product-drafts/${draftId}`
+      url.pathname ===
+      `/admin/product-drafts/${draftId}${operation === "save" ? "/prepare" : ""}`
         ? Response.json({ error: "Denied" }, { status })
         : undefined;
     if (operation === "save") click("Save draft answers");
@@ -469,7 +472,7 @@ it.each(
         client.invalidateQueries({
           queryKey: [
             "admin-drafts",
-            "https://api.benhalverson.dev",
+            "https://api.luluspeedworks.com",
             "admin",
             draftId,
           ],
@@ -518,7 +521,7 @@ it.each(["detail", "cleanup"])(
     });
     vi.mocked(fetch).mockClear();
     override = (url, init) => {
-      if (init?.method === "PUT") return Response.json({}, { status: 500 });
+      if (init?.method === "POST") return Response.json({}, { status: 500 });
       if (url.pathname === `/admin/product-drafts/${draftId}`)
         return Response.json({}, { status: stage === "detail" ? 403 : 404 });
       if (url.pathname.endsWith("/cleanup"))
@@ -540,7 +543,7 @@ it.each([200, 503])(
     await ready();
     const accessKey = [
       "admin-draft-access",
-      "https://api.benhalverson.dev",
+      "https://api.luluspeedworks.com",
       "admin",
     ];
     let finish: ((response: Response) => void) | undefined;
@@ -564,7 +567,7 @@ it.each([200, 503])(
       client.invalidateQueries({
         queryKey: [
           "admin-drafts",
-          "https://api.benhalverson.dev",
+          "https://api.luluspeedworks.com",
           "admin",
           draftId,
         ],
@@ -613,7 +616,7 @@ it.each(["re-entry", "account", "sign-out"])(
     await ready();
     let finish: ((response: Response) => void) | undefined;
     override = (_url, init) =>
-      init?.method === "PUT"
+      init?.method === "POST"
         ? new Promise<Response>((resolve) => {
             finish = resolve;
           })
@@ -668,7 +671,7 @@ it.each(
     await ready();
     let resolveSave: ((response: Response) => void) | undefined;
     override = (_url, init) =>
-      init?.method === "PUT"
+      init?.method === "POST"
         ? new Promise<Response>((resolve) => {
             resolveSave = resolve;
           })
@@ -688,7 +691,7 @@ it.each(
       client.invalidateQueries({
         queryKey: [
           source === "detail" ? "admin-drafts" : "admin-draft-access",
-          "https://api.benhalverson.dev",
+          "https://api.luluspeedworks.com",
           "admin",
           ...(source === "detail" ? [draftId] : []),
         ],
@@ -735,7 +738,7 @@ it.each(
       client.invalidateQueries({
         queryKey: [
           "admin-draft-access",
-          "https://api.benhalverson.dev",
+          "https://api.luluspeedworks.com",
           "admin",
         ],
         exact: true,
@@ -757,13 +760,13 @@ it("requires fresh authorization on route re-entry despite an earlier pending sa
   await ready();
   const payload = client.getQueryData([
     "admin-drafts",
-    "https://api.benhalverson.dev",
+    "https://api.luluspeedworks.com",
     "admin",
   ]);
   let resolveSave: ((response: Response) => void) | undefined;
   let resolveAccess: ((response: Response) => void) | undefined;
   override = (_url, init) =>
-    init?.method === "PUT"
+    init?.method === "POST"
       ? new Promise<Response>((resolve) => {
           resolveSave = resolve;
         })
@@ -813,7 +816,11 @@ it("retains authorized edits through a temporary list failure and retries", asyn
       : undefined;
   await act(() =>
     client.invalidateQueries({
-      queryKey: ["admin-draft-access", "https://api.benhalverson.dev", "admin"],
+      queryKey: [
+        "admin-draft-access",
+        "https://api.luluspeedworks.com",
+        "admin",
+      ],
       exact: true,
     }),
   );
@@ -849,7 +856,7 @@ it("ignores an aborted verification response after Strict Mode verifies access a
   );
   await ready();
   expect(signal?.aborted).toBe(true);
-  const listKey = ["admin-drafts", "https://api.benhalverson.dev", "admin"];
+  const listKey = ["admin-drafts", "https://api.luluspeedworks.com", "admin"];
   const verifiedDrafts = client.getQueryData(listKey);
   expect(verifiedDrafts).toMatchObject({ drafts: [{ id: draftId }] });
   await act(() => required(resolveAborted)(Response.json({ drafts: [] })));
@@ -880,7 +887,7 @@ it("rechecks access when the account changes and hides the workspace on sign-out
 
 it("refreshes cached listings and prices on entering Products and through Refresh", async () => {
   const client = testClient();
-  const pageKey = ["catalog", "https://api.benhalverson.dev", "page", 1];
+  const pageKey = ["catalog", "https://api.luluspeedworks.com", "page", 1];
   client.setQueryData(pageKey, apiPage([9]));
   renderWithClient(<App />, client);
   await ready();
@@ -920,7 +927,7 @@ it("falls back for failed catalog images and recovers when the source changes", 
   expect(listing.querySelector("img")).toBeNull();
   act(() =>
     client.setQueryData(
-      ["catalog", "https://api.benhalverson.dev", "page", 1],
+      ["catalog", "https://api.luluspeedworks.com", "page", 1],
       {
         ...apiPage([1, 2]),
         products: apiPage([1, 2]).products.map((product) => ({
@@ -947,7 +954,7 @@ it("renders identical saved notes as separate history entries without duplicate-
     fireEvent.change(screen.getByLabelText("Product notes"), {
       target: { value: "Repeat this note" },
     });
-    click("Save conversation note");
+    click("Send instruction");
     await settled();
   }
   const history = screen.getByRole("list", { name: "Conversation history" });
@@ -964,7 +971,7 @@ it("rebases only dirty answers after conflict without overwriting unrelated conc
   };
   let conflicted = false;
   override = (_url, init) => {
-    if (init?.method === "PUT" && !conflicted) {
+    if (init?.method === "POST" && !conflicted) {
       conflicted = true;
       current().revision = 2;
       current().state.answers.description = "Changed in another tab";
@@ -980,21 +987,22 @@ it("rebases only dirty answers after conflict without overwriting unrelated conc
   click("Save draft answers");
   await screen.findByText(/Saved state has been reloaded/);
   expect(screen.getByLabelText("Product name")).toHaveValue("My local name");
+  fireEvent.change(screen.getByLabelText("Correct a detail"), {
+    target: { value: "description" },
+  });
   expect(screen.getByLabelText("Description")).toHaveValue(
     "Changed in another tab",
   );
   click("Save draft answers");
   await screen.findByText("Draft answers saved. No catalog changes were made.");
   expect(
-    requests.find((request) => request.method === "PUT")?.body,
+    requests.find((request) => request.path.endsWith("/prepare"))?.body,
   ).toMatchObject({
     expectedRevision: 2,
-    state: {
-      answers: {
-        name: "My local name",
-        description: "Changed in another tab",
-        notes: "Keep these notes",
-      },
+    answers: {
+      name: "My local name",
+      description: "Changed in another tab",
+      notes: "Keep these notes",
     },
   });
   expect(current().state.answers).toEqual({
@@ -1133,7 +1141,7 @@ it.each(
     const client = testClient();
     renderWithClient(<App />, client);
     if (stage === "retry") {
-      await screen.findByLabelText("Product name");
+      await screen.findByRole("region", { name: "Product Card" });
       click("Reselect file");
     } else {
       await ready();
@@ -1257,7 +1265,7 @@ it.each(["upload", "recovery", "denial"])(
       client.invalidateQueries({
         queryKey: [
           "admin-drafts",
-          "https://api.benhalverson.dev",
+          "https://api.luluspeedworks.com",
           "admin",
           draftId,
         ],
@@ -1302,7 +1310,7 @@ it("does not start verification when an obsolete discard finishes after denial",
     client.invalidateQueries({
       queryKey: [
         "admin-drafts",
-        "https://api.benhalverson.dev",
+        "https://api.luluspeedworks.com",
         "admin",
         draftId,
       ],
@@ -1656,6 +1664,9 @@ it("browses authoritative products, saves independent facts through the real car
   );
   await screen.findByRole("heading", { name: "Pit tray" });
   click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Correct a detail"), {
+    target: { value: "notes" },
+  });
   fireEvent.change(screen.getByLabelText("Notes"), {
     target: { value: "Keep my jig" },
   });
@@ -1664,12 +1675,12 @@ it("browses authoritative products, saves independent facts through the real car
   fireEvent.change(screen.getByLabelText("Product notes"), {
     target: { value: "Needs a wider slot" },
   });
-  click("Save conversation note");
+  click("Send instruction");
   await screen.findByText("Needs a wider slot");
   expect(current().state.answers.notes).toBe("Keep my jig");
   expect(
     requests
-      .filter((r) => r.method === "PUT")
+      .filter((r) => r.path.endsWith("/prepare"))
       .map((r) => r.body.expectedRevision),
   ).toEqual([1, 2, 3]);
 });
@@ -1683,7 +1694,7 @@ it("restores the last selected draft, handles unavailable context, and reuses an
     }),
   ];
   localStorage.setItem(
-    "lulu-admin-draft:https://api.benhalverson.dev:admin",
+    "lulu-admin-draft:https://api.luluspeedworks.com:admin",
     JSON.stringify(otherId),
   );
   renderWithClient(<App />);
@@ -1768,12 +1779,14 @@ it("reorders photos independently of primary, replaces through the composer, and
   );
   await settled();
   expect(current().attachments.photos).toHaveLength(1);
-  expect(screen.getByLabelText("Product name")).toHaveValue("Retained");
+  expect(
+    screen.getByRole("region", { name: "Product Card" }),
+  ).toHaveTextContent("Retained");
 });
 it("reloads conflict outcomes before allowing another save and preserves typed answers", async () => {
   let failed = false;
   override = (_url, init) => {
-    if (init?.method === "PUT" && !failed) {
+    if (init?.method === "POST" && !failed) {
       failed = true;
       current().revision = 2;
       return Response.json({ error: "Revision conflict" }, { status: 409 });
@@ -1790,9 +1803,9 @@ it("reloads conflict outcomes before allowing another save and preserves typed a
   expect(screen.getByLabelText("Product name")).toHaveValue("Keep this answer");
   click("Save draft answers");
   await screen.findByText(/Draft answers saved/);
-  expect(requests.find((r) => r.method === "PUT")?.body.expectedRevision).toBe(
-    2,
-  );
+  expect(
+    requests.find((r) => r.path.endsWith("/prepare"))?.body.expectedRevision,
+  ).toBe(2);
 });
 it("discards explicitly and reports pending cleanup and protected assets", async () => {
   current().attachments.cleanup = [
@@ -1977,7 +1990,7 @@ it("blocks unresolved writes, reloads before retry, and guards leaving while a w
   let rejectWrite: ((value: Response) => void) | undefined;
   let failRead = false;
   override = (url, init) => {
-    if (init?.method === "PUT")
+    if (init?.method === "POST")
       return new Promise<Response>((resolve) => {
         rejectWrite = resolve;
       });
@@ -2176,6 +2189,9 @@ it("rejects forged and stale A2UI actions before any draft request", async () =>
   });
   await send("answer", { draftId, field: "unsupported", value: "No" });
   await send("delete", { draftId, id: "invalid" });
+  await send("confirmCategory", { draftId });
+  await send("confirmCategory", { draftId, name: "Unproposed" });
+  await send("correction", { draftId, field: "forged" });
   await send("replace", { draftId, id: otherPhotoId });
   await send("delete", { draftId, id: otherPhotoId });
   await send("earlier", { draftId, id: photoId });
@@ -2188,7 +2204,7 @@ it("rejects forged and stale A2UI actions before any draft request", async () =>
   expect(requests.filter((r) => r.method !== "GET")).toHaveLength(0);
   let resolve: ((value: Response) => void) | undefined;
   override = (_url, init) =>
-    init?.method === "PUT"
+    init?.method === "POST"
       ? new Promise<Response>((done) => {
           resolve = done;
         })
@@ -2238,7 +2254,7 @@ it("recovers a failed new conversation request by reloading the list, including 
 it("keeps active cleanup distinct from discard when a save and authoritative read fail", async () => {
   let failed = false;
   override = (url, init) => {
-    if (init?.method === "PUT") {
+    if (init?.method === "POST") {
       failed = true;
       return Response.json({ error: "Save failed" }, { status: 500 });
     }
@@ -2259,7 +2275,7 @@ it("keeps active cleanup distinct from discard when a save and authoritative rea
 it("serializes duplicate gestures and protects upload and form controls during a write", async () => {
   let resolve: ((value: Response) => void) | undefined;
   override = (_url, init) =>
-    init?.method === "PUT"
+    init?.method === "POST"
       ? new Promise<Response>((done) => {
           resolve = done;
         })
@@ -2284,7 +2300,7 @@ it("serializes duplicate gestures and protects upload and form controls during a
   });
   // Recovering a retained response can repopulate a cache cleared by session teardown.
   client.removeQueries({
-    queryKey: ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+    queryKey: ["admin-drafts", "https://api.luluspeedworks.com", "admin"],
     exact: true,
   });
   await act(() =>
@@ -2461,9 +2477,407 @@ it.each([
     );
     expect(
       requests
-        .filter((request) => request.method === "PUT")
+        .filter((request) => request.path.endsWith("/prepare"))
         .map((request) => request.body.expectedRevision),
     ).toEqual([2, 4]);
     expect(current().state.answers.name).toBe("Kept through cleanup");
   },
 );
+
+it("renders one prepared card with direct category confirmation and authoritative material/color controls", async () => {
+  current().state = {
+    answers: {
+      name: "Prepared part",
+      description: "Owner supplied description",
+      markupPercentage: "50",
+      inPersonPrice: "2.50",
+      categoryNames: ["New parts"],
+      filamentType: "PLA",
+      color: "Blue",
+    },
+    pendingQuestions: [
+      { id: "filamentType", prompt: "Choose material" },
+      { id: "color", prompt: "Choose color" },
+    ],
+    history: [],
+    interpretation: {
+      intent: "create",
+      status: "prepared",
+      explanation: "Prepared only",
+      proposedCategoryNames: ["New parts"],
+      confirmedCategoryNames: [],
+      productionOptions: [
+        { material: "PLA", color: "Blue" },
+        { material: "PETG", color: "Red" },
+      ],
+    },
+  };
+  renderWithClient(<App />);
+  const card = await screen.findByRole("region", { name: "Product Card" });
+  expect(screen.getAllByRole("region", { name: "Product Card" })).toHaveLength(
+    1,
+  );
+  expect(
+    within(card).getByRole("button", { name: "Create product — unavailable" }),
+  ).toBeDisabled();
+  expect(card).toHaveTextContent("Online markup: 50%");
+  expect(card).toHaveTextContent("In-person price: 2.50");
+  expect(screen.queryByLabelText("Product name")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Material"), {
+    target: { value: "PETG" },
+  });
+  fireEvent.change(screen.getByLabelText("Color"), {
+    target: { value: "Red" },
+  });
+  fireEvent.change(screen.getByLabelText("Correct a detail"), {
+    target: { value: "categoryNames" },
+  });
+  fireEvent.change(screen.getByLabelText("Category names (one per line)"), {
+    target: { value: "New parts\n" },
+  });
+  expect(screen.getByLabelText("Category names (one per line)")).toHaveValue(
+    "New parts\n",
+  );
+  fireEvent.change(screen.getByLabelText("Category names (one per line)"), {
+    target: { value: "New parts\nExisting parts" },
+  });
+  click("Save draft answers");
+  await settled();
+  expect(current().state.answers).toMatchObject({
+    filamentType: "PETG",
+    color: "Red",
+    categoryNames: ["New parts", "Existing parts"],
+  });
+  override = (url, init) => {
+    if (!url.pathname.endsWith("/prepare")) return;
+    const body = JSON.parse(String(init?.body));
+    if (!body.confirmCategoryName) return;
+    requests.push({ path: url.pathname, method: "POST", body });
+    current().revision++;
+    current().state.answers = {
+      ...current().state.answers,
+      ...body.answers,
+      categoryIds: [9, 10],
+    };
+    const interpretation = required(current().state.interpretation);
+    interpretation.proposedCategoryNames = [];
+    interpretation.confirmedCategoryNames = ["New parts"];
+    return Response.json(current());
+  };
+  click("Confirm new category: New parts");
+  await settled();
+  expect(
+    requests.filter((request) => request.path.endsWith("/prepare")).at(-1)
+      ?.body,
+  ).toMatchObject({ expectedRevision: 2, confirmCategoryName: "New parts" });
+  expect(requests.every((request) => !("message" in request.body))).toBe(true);
+  expect(
+    screen.getByText(
+      "Category confirmation saved. Product creation remains unavailable.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Confirm new category: New parts" }),
+  ).toBeNull();
+  expect(current().state.answers.categoryIds).toEqual([9, 10]);
+  expect(screen.getAllByRole("region", { name: "Product Card" })).toHaveLength(
+    1,
+  );
+});
+
+it("replaces a complete instruction with compact review, retaining direct answers in the bound request", async () => {
+  renderWithClient(<App />);
+  await ready();
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "Direct name" },
+  });
+  override = (url, init) => {
+    if (!url.pathname.endsWith("/prepare")) return;
+    const body = JSON.parse(String(init?.body));
+    expect(body.answers.name).toBe("Direct name");
+    expect(body.message).toBe("Use 50 percent markup");
+    current().revision++;
+    current().state = {
+      answers: {
+        ...body.answers,
+        markupPercentage: "50",
+        inPersonPrice: "2.00",
+        description: "Known description",
+      },
+      pendingQuestions: [],
+      history: [{ role: "user", content: body.message }],
+      interpretation: {
+        intent: "create",
+        status: "prepared",
+        explanation: "Updated markup only.",
+        proposedCategoryNames: [],
+        confirmedCategoryNames: [],
+        productionOptions: [],
+      },
+    };
+    return Response.json(current());
+  };
+  fireEvent.change(screen.getByLabelText("Product notes"), {
+    target: { value: "Use 50 percent markup" },
+  });
+  click("Send instruction");
+  await settled();
+  expect(screen.queryByLabelText("Product name")).toBeNull();
+  expect(screen.getAllByRole("region", { name: "Product Card" })).toHaveLength(
+    1,
+  );
+  expect(
+    screen.getByRole("region", { name: "Product Card" }),
+  ).toHaveTextContent("Known description");
+  expect(
+    screen.getByRole("button", { name: "Create product — unavailable" }),
+  ).toBeDisabled();
+  expect(screen.getByLabelText("Product notes")).toHaveValue("");
+});
+
+it("retains authoritative existing facts and current price while missing legacy preparation values remain unknown", async () => {
+  current().target = { kind: "existing", productId: 1 };
+  current().context = {
+    status: "available",
+    product: {
+      id: 1,
+      name: "Authoritative part",
+      description: "Known facts",
+      image: null,
+      price: 3,
+      filamentType: "PLA",
+      color: null,
+      skuNumber: null,
+      publicFileServiceId: null,
+    },
+    categories: [{ categoryId: 1, categoryName: "Existing parts" }],
+  };
+  current().state.answers = { name: "" };
+  current().state.pendingQuestions = [
+    { id: "filamentType", prompt: "Verify material" },
+    { id: "color", prompt: "Choose color" },
+    { id: "categoryNames", prompt: "Choose category" },
+  ];
+  renderWithClient(<App />);
+  const card = await screen.findByRole("region", { name: "Product Card" });
+  expect(card).toHaveTextContent("Current catalog online price: $3.00");
+  expect(card).toHaveTextContent("Categories: #1");
+  expect(card).toHaveTextContent("Online markup: Not supplied");
+  expect(screen.getByLabelText("Material")).toHaveValue("PLA");
+  expect(screen.getByLabelText("Color")).toHaveValue("");
+  expect(screen.getByLabelText("Category names (one per line)")).toHaveValue(
+    "",
+  );
+  expect(
+    within(card).getByRole("heading", { name: "Authoritative part" }),
+  ).toBeVisible();
+  expect(requests.every((request) => request.method === "GET")).toBe(true);
+});
+
+it("resolves category names by explicitly selecting an authoritative existing identity", async () => {
+  renderWithClient(<App />);
+  await ready();
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Correct a detail"), {
+    target: { value: "categoryIds" },
+  });
+  await waitFor(() =>
+    expect(screen.getByLabelText("Existing categories").tagName).toBe("SELECT"),
+  );
+  fireEvent.change(screen.getByLabelText("Existing categories"), {
+    target: { value: "1" },
+  });
+  expect(
+    screen.getByRole("region", { name: "Product Card" }),
+  ).toHaveTextContent("Categories: #1");
+  click("Save draft answers");
+  await settled();
+  expect(
+    requests.find((request) => request.path.endsWith("/prepare"))?.body,
+  ).toMatchObject({ answers: { categoryIds: [1], categoryNames: [] } });
+});
+
+it.each([undefined, null, 2.5])(
+  "retains authoritative in-person price %s while explicit edits and blanks survive reload",
+  async (inPersonPrice) => {
+    current().target = { kind: "existing", productId: 1 };
+    current().context = {
+      status: "available",
+      product: {
+        id: 1,
+        name: "Known part",
+        description: "Known description",
+        image: null,
+        price: 3,
+        inPersonPrice,
+        filamentType: "PLA",
+        color: "Blue",
+        skuNumber: null,
+        publicFileServiceId: null,
+      },
+      categories: [],
+    };
+    current().state.answers = {};
+    current().state.interpretation = {
+      intent: "update",
+      status: "prepared",
+      explanation: "Review the current product",
+      confirmedCategoryNames: [],
+      proposedCategoryNames: [],
+      productionOptions: [],
+    };
+    const first = renderWithClient(<App />);
+    await screen.findByRole("region", { name: "Product Card" });
+    fireEvent.change(screen.getByLabelText("Correct a detail"), {
+      target: { value: "inPersonPrice" },
+    });
+    expect(screen.getByLabelText("In-person price (USD)")).toHaveValue(
+      inPersonPrice == null ? "" : "2.50",
+    );
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+    fireEvent.change(screen.getByLabelText("In-person price (USD)"), {
+      target: { value: "7.25" },
+    });
+    click("Save draft answers");
+    await settled();
+    expect(current().state.answers.inPersonPrice).toBe("7.25");
+    expect(
+      screen.getByRole("region", { name: "Product Card" }),
+    ).toHaveTextContent("In-person price: 7.25");
+    fireEvent.change(screen.getByLabelText("Correct a detail"), {
+      target: { value: "inPersonPrice" },
+    });
+    fireEvent.change(screen.getByLabelText("In-person price (USD)"), {
+      target: { value: "" },
+    });
+    click("Save draft answers");
+    await settled();
+    expect(current().state.answers.inPersonPrice).toBe("");
+    first.unmount();
+    requests = [];
+    renderWithClient(<App />);
+    await screen.findByRole("region", { name: "Product Card" });
+    fireEvent.change(screen.getByLabelText("Correct a detail"), {
+      target: { value: "inPersonPrice" },
+    });
+    expect(screen.getByLabelText("In-person price (USD)")).toHaveValue("");
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+  },
+);
+
+it("shows authoritative online and in-person listing prices as separate USD values", async () => {
+  override = (url) => {
+    if (url.pathname !== "/products") return;
+    const page = apiPage([1, 2]);
+    return Response.json({
+      ...page,
+      products: page.products.map((product) => ({
+        ...product,
+        inPersonPrice: product.id === 1 ? 1.5 : null,
+      })),
+    });
+  };
+  renderWithClient(<App />);
+  await ready();
+  click("Products");
+  expect(await screen.findByText("In-person $1.50")).toBeVisible();
+  expect(screen.getAllByText("Online $2.29")).toHaveLength(2);
+  expect(screen.getByText("In-person price unavailable")).toBeVisible();
+});
+
+it("does not replace a newer prepared revision with an older in-flight draft read", async () => {
+  const client = testClient();
+  renderWithClient(<App />, client);
+  await ready();
+  const older = structuredClone(current());
+  let release: ((response: Response) => void) | undefined;
+  override = (url, init) =>
+    url.pathname === `/admin/product-drafts/${draftId}` &&
+    (init?.method ?? "GET") === "GET"
+      ? new Promise<Response>((resolve) => {
+          release = resolve;
+        })
+      : undefined;
+  void client.invalidateQueries({
+    queryKey: [
+      "admin-drafts",
+      "https://api.luluspeedworks.com",
+      "admin",
+      draftId,
+    ],
+  });
+  await waitFor(() => expect(release).toBeDefined());
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "Newest saved name" },
+  });
+  click("Save draft answers");
+  await settled();
+  expect(current().revision).toBe(2);
+  await act(async () => release?.(Response.json(older)));
+  await waitFor(() =>
+    expect(
+      client.isFetching({
+        queryKey: [
+          "admin-drafts",
+          "https://api.luluspeedworks.com",
+          "admin",
+          draftId,
+        ],
+      }),
+    ).toBe(0),
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Newest saved name",
+  );
+});
+
+it("does not replace a newer authoritative read with an older delayed save response", async () => {
+  const client = testClient();
+  renderWithClient(<App />, client);
+  await ready();
+  let release: ((response: Response) => void) | undefined;
+  override = (url, init) =>
+    url.pathname.endsWith("/prepare") && init?.method === "POST"
+      ? new Promise<Response>((resolve) => {
+          release = resolve;
+        })
+      : undefined;
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "My saved revision" },
+  });
+  click("Save draft answers");
+  await waitFor(() => expect(release).toBeDefined());
+  current().revision = 3;
+  current().state.answers.name = "Newest external revision";
+  await act(async () => {
+    await client.invalidateQueries({
+      queryKey: [
+        "admin-drafts",
+        "https://api.luluspeedworks.com",
+        "admin",
+        draftId,
+      ],
+    });
+  });
+  await act(async () =>
+    release?.(
+      Response.json(
+        draft({
+          revision: 2,
+          state: {
+            answers: { name: "My saved revision" },
+            history: [],
+            pendingQuestions: [],
+          },
+        }),
+      ),
+    ),
+  );
+  await settled();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Newest external revision",
+  );
+});

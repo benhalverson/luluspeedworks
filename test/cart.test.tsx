@@ -74,7 +74,7 @@ beforeEach(() => {
     expect(init?.credentials).toBe("include");
     expect(init?.cache).toBe("no-store");
     if (path === "/cart/create")
-      return Response.json({ cartId, guestToken: cartId });
+      return Response.json({ cartId, guestToken: cartId, ownerId: null });
     if (method === "GET") return Response.json(server);
     if (path === "/cart/add") {
       const current = server.items[0];
@@ -273,7 +273,7 @@ it("claims with the guest capability and stops sending it once owned", async () 
   vi.mocked(fetch).mockImplementation(async (url, init) => {
     if (String(url).endsWith("/claim")) {
       expect(new Headers(init?.headers).get("X-Cart-Token")).toBe(cartId);
-      return Response.json({ message: "claimed" });
+      return Response.json({ message: "claimed", ownerId: "alice" });
     }
     return original(url, init);
   });
@@ -338,7 +338,7 @@ it("retains an interrupted claim for its intended account and permits a safe ret
   vi.mocked(fetch).mockImplementation(async (url) => {
     if (String(url).endsWith("/claim")) {
       if (failClaim) throw Error("Claim response lost");
-      return Response.json({ message: "already owned" });
+      return Response.json({ message: "already owned", ownerId: "alice" });
     }
     return Response.json(server);
   });
@@ -393,7 +393,7 @@ it("creates account-owned carts without requiring a guest token", async () => {
   if (!original) throw new Error("Expected the cart fetch fixture");
   vi.mocked(fetch).mockImplementation(async (url, init) =>
     String(url).endsWith("/cart/create")
-      ? Response.json({ cartId })
+      ? Response.json({ cartId, ownerId: "alice" })
       : original(url, init),
   );
   await act(() =>
@@ -423,3 +423,216 @@ it.each([true, false])(
     expect(requests.some((r) => r.path === "/cart/add")).toBe(false);
   },
 );
+
+it.each(["switch", "unmount", "denial", "verification"])(
+  "retains uncertainty when a late mutation finishes after %s",
+  async (change) => {
+    save();
+    const view = mount("alice");
+    await waitFor(() => expect(view.result.current.cart.isSuccess).toBe(true));
+    const original = vi.mocked(fetch).getMockImplementation();
+    let finish!: (response: Response) => void;
+    let signal: AbortSignal | null | undefined;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/add")) {
+        signal = init?.signal;
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      }
+      if (!original) throw Error("Missing cart fixture");
+      return original(url, init);
+    });
+    let mutation!: Promise<unknown>;
+    act(() => {
+      mutation = view.result.current.mutation.mutateAsync({
+        kind: "add",
+        item,
+      });
+    });
+    const rejected = expect(mutation).rejects.toThrow("session changed");
+    await waitFor(() => expect(finish).toBeDefined());
+    if (change === "switch") view.rerender({ identity: "bob", ready: true });
+    else if (change === "unmount") view.unmount();
+    else if (change === "verification") {
+      view.rerender({ identity: "alice", ready: false });
+      view.rerender({ identity: "alice", ready: true });
+    } else {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(null, { status: 404 }),
+      );
+      await act(() => view.result.current.cart.refetch());
+    }
+    const saved = localStorage.getItem(key);
+    expect(JSON.parse(saved ?? "null").pending).toBe(true);
+    expect(signal?.aborted).toBe(false);
+    await act(async () => {
+      finish(Response.json({ message: "committed" }));
+      await rejected;
+    });
+    expect(localStorage.getItem(key)).toBe(saved);
+  },
+);
+
+it("ignores a late creation after session readiness is lost", async () => {
+  const view = mount();
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementation(
+    () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let mutation!: Promise<unknown>;
+  act(() => {
+    mutation = view.result.current.mutation.mutateAsync({ kind: "add", item });
+  });
+  const rejected = expect(mutation).rejects.toThrow("session");
+  await waitFor(() => expect(finish).toBeDefined());
+  view.rerender({ identity: null, ready: false });
+  await act(async () => {
+    finish(Response.json({ cartId, guestToken: cartId, ownerId: null }));
+    await rejected;
+  });
+  expect(localStorage.getItem(key)).toBeNull();
+});
+
+it("allows the expected guest-to-account transition during a claim only", async () => {
+  save();
+  const view = mount();
+  await waitFor(() => expect(view.result.current.cart.isSuccess).toBe(true));
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementation(async (url) =>
+    String(url).endsWith("/claim")
+      ? new Promise<Response>((resolve) => {
+          finish = resolve;
+        })
+      : Response.json(server),
+  );
+  let mutation!: Promise<unknown>;
+  act(() => {
+    mutation = view.result.current.mutation.mutateAsync({
+      kind: "claim",
+      userId: "alice",
+    });
+  });
+  await waitFor(() => expect(finish).toBeDefined());
+  view.rerender({ identity: "alice", ready: true });
+  await act(async () => {
+    finish(Response.json({ message: "claimed", ownerId: "alice" }));
+    await mutation;
+  });
+  expect(
+    JSON.parse(localStorage.getItem(key) ?? "null").guestToken,
+  ).toBeUndefined();
+  await act(async () => {
+    await expect(
+      view.result.current.mutation.mutateAsync({
+        kind: "claim",
+        userId: "bob",
+      }),
+    ).rejects.toThrow("session changed");
+  });
+});
+
+it("rejects a late read after denial and recovers only through a fresh verification", async () => {
+  save();
+  const view = mount();
+  await waitFor(() => expect(view.result.current.cart.isSuccess).toBe(true));
+  let finish!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  let read!: ReturnType<typeof view.result.current.cart.refetch>;
+  act(() => {
+    read = view.result.current.cart.refetch();
+  });
+  await waitFor(() => expect(finish).toBeDefined());
+  act(() => window.dispatchEvent(new Event(`lulu-cart-denied:${origin}`)));
+  await act(async () => {
+    finish(Response.json({ items: [line], total: 4.58 }));
+    await read;
+  });
+  await waitFor(() =>
+    expect(view.result.current.cart.error?.message).toContain(
+      "session changed",
+    ),
+  );
+  vi.mocked(fetch).mockRejectedValueOnce(Error("Temporarily offline"));
+  await act(() => view.result.current.cart.refetch());
+  await waitFor(() =>
+    expect(view.result.current.cart.error?.message).toContain("offline"),
+  );
+  await act(() => view.result.current.cart.refetch());
+  await waitFor(() => expect(view.result.current.cart.isSuccess).toBe(true));
+});
+
+it("keeps separate saved bags when another account starts shopping", async () => {
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      cartId,
+      ownerId: "alice",
+      pending: false,
+      revision: crypto.randomUUID(),
+    }),
+  );
+  const view = mount("bob");
+  const bobCart = "4a3fc68b-7d3c-47a3-88e0-299fc3996e48";
+  const original = vi.mocked(fetch).getMockImplementation();
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (String(url).endsWith("/create")) {
+      expect(JSON.parse(String(init?.body))).toEqual({ expectedUserId: "bob" });
+      return Response.json({ cartId: bobCart, ownerId: "bob" });
+    }
+    if (!original) throw Error("Missing cart fixture");
+    return original(url, init);
+  });
+  await act(() =>
+    view.result.current.mutation.mutateAsync({ kind: "add", item }),
+  );
+  expect(JSON.parse(localStorage.getItem(key) ?? "null").cartId).toBe(bobCart);
+  view.rerender({ identity: "alice", ready: true });
+  await waitFor(() => expect(requests.at(-1)?.path).toBe(`/cart/${cartId}`));
+  await act(() =>
+    view.result.current.mutation.mutateAsync({ kind: "acknowledge" }),
+  );
+  expect(JSON.parse(localStorage.getItem(key) ?? "null").ownerId).toBe("alice");
+  view.rerender({ identity: "bob", ready: true });
+  await waitFor(() => expect(requests.at(-1)?.path).toBe(`/cart/${bobCart}`));
+});
+
+it("does not continue queued mutations after their mounted visit ends", async () => {
+  save();
+  const view = mount();
+  await waitFor(() => expect(view.result.current.cart.isSuccess).toBe(true));
+  let finish!: (response: Response) => void;
+  const original = vi.mocked(fetch).getMockImplementation();
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (String(url).endsWith("/add"))
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    if (!original) throw Error("Missing cart fixture");
+    return original(url, init);
+  });
+  let first!: Promise<unknown>;
+  let second!: Promise<unknown>;
+  act(() => {
+    first = view.result.current.mutation.mutateAsync({ kind: "add", item });
+    second = view.result.current.mutation.mutateAsync({ kind: "add", item });
+  });
+  const rejected = Promise.all([
+    expect(first).rejects.toThrow("session changed"),
+    expect(second).rejects.toThrow("session changed"),
+  ]);
+  await waitFor(() => expect(finish).toBeDefined());
+  view.unmount();
+  await act(async () => {
+    finish(Response.json({ message: "committed" }));
+    await rejected;
+  });
+});

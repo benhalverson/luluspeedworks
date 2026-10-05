@@ -61,7 +61,7 @@ const prices = new Intl.NumberFormat("en-US", {
 export function createCatalogController(
   client: QueryClient,
   onAction: (name: string, context: A2uiClientAction["context"]) => void,
-  origin = "https://api.benhalverson.dev",
+  origin = "https://api.luluspeedworks.com",
 ) {
   const processor = new MessageProcessor(
     [componentCatalog],

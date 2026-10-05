@@ -9,6 +9,7 @@ const productSchema = z.object({
   description: z.string(),
   image: z.string().nullable().optional(),
   price: z.number().finite().nonnegative(),
+  inPersonPrice: z.number().finite().nonnegative().nullable().optional(),
 });
 const pageSchema = z.object({
   products: z.array(productSchema),
