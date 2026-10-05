@@ -501,7 +501,7 @@ function Workspace({
       }
     });
   }
-  /** Route validated A2UI actions to the current draft, never to catalog mutations. */
+  /** Route validated A2UI actions to draft preparation and explicitly confirmed category creation. */
   function cardAction(action: A2uiClientAction) {
     if (!draft || disabled || action.context?.draftId !== draft.id) return;
     if (action.name === "confirmCategory") {
@@ -525,7 +525,7 @@ function Workspace({
         publish(next);
         clearEdits(draft.id);
         setNotice(
-          "Category name confirmed for preparation only. No category was created.",
+          "Category confirmation saved. Product creation remains unavailable.",
         );
       });
       return;

@@ -2544,6 +2544,22 @@ it("renders one prepared card with direct category confirmation and authoritativ
     color: "Red",
     categoryNames: ["New parts", "Existing parts"],
   });
+  override = (url, init) => {
+    if (!url.pathname.endsWith("/prepare")) return;
+    const body = JSON.parse(String(init?.body));
+    if (!body.confirmCategoryName) return;
+    requests.push({ path: url.pathname, method: "POST", body });
+    current().revision++;
+    current().state.answers = {
+      ...current().state.answers,
+      ...body.answers,
+      categoryIds: [9, 10],
+    };
+    const interpretation = required(current().state.interpretation);
+    interpretation.proposedCategoryNames = [];
+    interpretation.confirmedCategoryNames = ["New parts"];
+    return Response.json(current());
+  };
   click("Confirm new category: New parts");
   await settled();
   expect(
@@ -2553,9 +2569,16 @@ it("renders one prepared card with direct category confirmation and authoritativ
   expect(requests.every((request) => !("message" in request.body))).toBe(true);
   expect(
     screen.getByText(
-      "Category name confirmed for preparation only. No category was created.",
+      "Category confirmation saved. Product creation remains unavailable.",
     ),
   ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Confirm new category: New parts" }),
+  ).toBeNull();
+  expect(current().state.answers.categoryIds).toEqual([9, 10]);
+  expect(screen.getAllByRole("region", { name: "Product Card" })).toHaveLength(
+    1,
+  );
 });
 
 it("replaces a complete instruction with compact review, retaining direct answers in the bound request", async () => {
