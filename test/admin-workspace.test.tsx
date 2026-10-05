@@ -2694,6 +2694,94 @@ it("resolves category names by explicitly selecting an authoritative existing id
   ).toMatchObject({ answers: { categoryIds: [1], categoryNames: [] } });
 });
 
+it.each([undefined, null, 2.5])(
+  "retains authoritative in-person price %s while explicit edits and blanks survive reload",
+  async (inPersonPrice) => {
+    current().target = { kind: "existing", productId: 1 };
+    current().context = {
+      status: "available",
+      product: {
+        id: 1,
+        name: "Known part",
+        description: "Known description",
+        image: null,
+        price: 3,
+        inPersonPrice,
+        filamentType: "PLA",
+        color: "Blue",
+        skuNumber: null,
+        publicFileServiceId: null,
+      },
+      categories: [],
+    };
+    current().state.answers = {};
+    current().state.interpretation = {
+      intent: "update",
+      status: "prepared",
+      explanation: "Review the current product",
+      confirmedCategoryNames: [],
+      proposedCategoryNames: [],
+      productionOptions: [],
+    };
+    const first = renderWithClient(<App />);
+    await screen.findByRole("region", { name: "Product Card" });
+    fireEvent.change(screen.getByLabelText("Correct a detail"), {
+      target: { value: "inPersonPrice" },
+    });
+    expect(screen.getByLabelText("In-person price (USD)")).toHaveValue(
+      inPersonPrice == null ? "" : "2.50",
+    );
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+    fireEvent.change(screen.getByLabelText("In-person price (USD)"), {
+      target: { value: "7.25" },
+    });
+    click("Save draft answers");
+    await settled();
+    expect(current().state.answers.inPersonPrice).toBe("7.25");
+    expect(
+      screen.getByRole("region", { name: "Product Card" }),
+    ).toHaveTextContent("In-person price: 7.25");
+    fireEvent.change(screen.getByLabelText("Correct a detail"), {
+      target: { value: "inPersonPrice" },
+    });
+    fireEvent.change(screen.getByLabelText("In-person price (USD)"), {
+      target: { value: "" },
+    });
+    click("Save draft answers");
+    await settled();
+    expect(current().state.answers.inPersonPrice).toBe("");
+    first.unmount();
+    requests = [];
+    renderWithClient(<App />);
+    await screen.findByRole("region", { name: "Product Card" });
+    fireEvent.change(screen.getByLabelText("Correct a detail"), {
+      target: { value: "inPersonPrice" },
+    });
+    expect(screen.getByLabelText("In-person price (USD)")).toHaveValue("");
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+  },
+);
+
+it("shows authoritative online and in-person listing prices as separate USD values", async () => {
+  override = (url) => {
+    if (url.pathname !== "/products") return;
+    const page = apiPage([1, 2]);
+    return Response.json({
+      ...page,
+      products: page.products.map((product) => ({
+        ...product,
+        inPersonPrice: product.id === 1 ? 1.5 : null,
+      })),
+    });
+  };
+  renderWithClient(<App />);
+  await ready();
+  click("Products");
+  expect(await screen.findByText("In-person $1.50")).toBeVisible();
+  expect(screen.getAllByText("Online $2.29")).toHaveLength(2);
+  expect(screen.getByText("In-person price unavailable")).toBeVisible();
+});
+
 it("does not replace a newer prepared revision with an older in-flight draft read", async () => {
   const client = testClient();
   renderWithClient(<App />, client);

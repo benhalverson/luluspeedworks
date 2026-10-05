@@ -337,6 +337,7 @@ function Workspace({
           ? {
               name: known.product.name,
               description: known.product.description,
+              inPersonPrice: known.product.inPersonPrice?.toFixed(2),
               filamentType: known.product.filamentType,
               color: known.product.color ?? "",
               categoryIds: known.categories.map(
@@ -1104,7 +1105,9 @@ function Workspace({
                           Online {money.format(product.price)}
                         </p>
                         <p className="text-sm text-muted-foreground">
-                          In-person price unavailable
+                          {product.inPersonPrice == null
+                            ? "In-person price unavailable"
+                            : `In-person ${money.format(product.inPersonPrice)}`}
                         </p>
                         <p className="mt-4 text-primary">Manage product ↗</p>
                       </button>

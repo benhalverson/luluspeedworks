@@ -1,6 +1,48 @@
 import { draft, draftId } from "../admin-fixtures";
 import { checkLayout, deferred, draftList, expect, test } from "./fixtures";
 
+test("retains the existing in-person USD price on review and reload without mutation", async ({
+  page,
+  api,
+}) => {
+  api.responses.set(`GET /admin/product-drafts/${draftId}`, {
+    body: draft({
+      target: { kind: "existing", productId: 1 },
+      context: {
+        status: "available",
+        product: {
+          id: 1,
+          name: "Existing part",
+          description: "Known product facts",
+          image: null,
+          price: 3,
+          inPersonPrice: 2.5,
+          filamentType: "PLA",
+          color: "Blue",
+          skuNumber: null,
+          publicFileServiceId: null,
+        },
+        categories: [],
+      },
+    }),
+  });
+  await page.goto("/admin/products");
+  await page.getByRole("button", { name: "Edit draft facts" }).click();
+  await page.getByLabel("Correct a detail").selectOption("inPersonPrice");
+  await expect(page.getByLabel("In-person price (USD)")).toHaveValue("2.50");
+  const card = page.getByRole("region", { name: "Product Card" });
+  await expect(card).toContainText("Current catalog online price: $3.00");
+  await expect(card).toContainText("In-person price: 2.50");
+  await page.reload();
+  await page.getByRole("button", { name: "Edit draft facts" }).click();
+  await page.getByLabel("Correct a detail").selectOption("inPersonPrice");
+  await expect(page.getByLabel("In-person price (USD)")).toHaveValue("2.50");
+  expect(api.requests.every((request) => request.startsWith("GET "))).toBe(
+    true,
+  );
+  await checkLayout(page);
+});
+
 for (const status of [401, 403]) {
   for (const operation of ["detail", "save"]) {
     test(`${operation} ${status} hides all private workspace UI until fresh verification`, async ({
