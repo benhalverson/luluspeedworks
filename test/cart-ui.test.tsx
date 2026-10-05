@@ -35,7 +35,7 @@ const color = {
   profile: "PLA",
   available: true,
 };
-const key = "lulu-cart-v2:https://api.benhalverson.dev";
+const key = "lulu-cart-v2:https://api.luluspeedworks.com";
 const line = {
   id: 91,
   productId: "SKU-101",
@@ -92,9 +92,9 @@ beforeEach(() => {
     if (path === "/v2/colors")
       return Response.json({ success: true, data: [color] });
     if (path === "/cart/create")
-      return Response.json({ cartId, guestToken: cartId });
+      return Response.json({ cartId, guestToken: cartId, ownerId: null });
     if (path === `/cart/${cartId}/claim`)
-      return Response.json({ message: "Cart claimed" });
+      return Response.json({ message: "Cart claimed", ownerId: "alice" });
     if (init?.method === "GET")
       return failRead
         ? Response.json({}, { status: 403 })
@@ -165,7 +165,7 @@ it.each(
     });
     act(() => {
       void client.invalidateQueries({
-        queryKey: ["cart", "https://api.benhalverson.dev", "alice"],
+        queryKey: ["cart", "https://api.luluspeedworks.com", "alice"],
       });
     });
     await waitFor(() => expect(finish).toBeDefined());

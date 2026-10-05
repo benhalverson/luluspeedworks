@@ -103,7 +103,7 @@ it("validates email, posts the exact SDK request, and offers generic confirmatio
   expect(screen.getByText(/expires in one hour/)).toBeVisible();
   expect(posts()).toHaveLength(1);
   expect(String(posts()[0]?.[0])).toBe(
-    "https://api.benhalverson.dev/api/auth/request-password-reset",
+    "https://api.luluspeedworks.com/api/auth/request-password-reset",
   );
   expect(JSON.parse(String(posts()[0]?.[1]?.body))).toEqual({
     email: "ben@example.com",
@@ -175,7 +175,7 @@ it("resets for signed-in visitors, replaces the token URL, clears private cache,
     resetDone = true;
     return Response.json({ status: true });
   });
-  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  const key = "lulu-cart-v2:https://api.luluspeedworks.com";
   localStorage.setItem(
     key,
     JSON.stringify({ cartId: "saved-bag", ownerId: "user-1" }),

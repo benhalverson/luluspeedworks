@@ -8,6 +8,8 @@ it("uses the real Better Auth client for cookie login, session verification and 
     credentials?: RequestCredentials;
   }[] = [];
   vi.mocked(fetch).mockImplementation(async (url, options) => {
+    expect(new URL(String(url)).origin).toBe("https://api.luluspeedworks.com");
+    expect(options?.cache).toBe("no-store");
     const path = new URL(String(url)).pathname;
     requests.push({
       path,

@@ -19,7 +19,11 @@ pnpm dev
 
 Use the Node and pnpm versions pinned in [package.json](package.json) and [.nvmrc](.nvmrc). The setup commands above are for a fresh human development environment; agents use the active shell executables as specified in [AGENTS.md](AGENTS.md). Development and `pnpm exec vite preview` use `http://localhost:3000` with strict ports. The API must allow that frontend origin.
 
-The public build-time `VITE_API_ORIGIN` defaults to `https://api.benhalverson.dev`. For a separately running development API, run `VITE_API_ORIGIN=http://localhost:8787 pnpm dev`; that API must allow the frontend origin. This value is public and must contain no secrets. Public catalog reads omit credentials; auth, bag, profile and private draft requests include credentials. External presigned print uploads omit cookies. No proxy or backend is included. See the [source map](#source-map) for request contracts.
+The public build-time `VITE_API_ORIGIN` defaults to the storefront’s same-site API hostname, `https://api.luluspeedworks.com`. For a separately running development API, run `VITE_API_ORIGIN=http://localhost:8787 pnpm dev`; that API must allow the frontend origin. This value is public and must contain no secrets. Public catalog reads omit credentials; auth, bag, profile and private draft requests include credentials. External presigned print uploads omit cookies. No proxy or backend is included. See the [source map](#source-map) for request contracts.
+
+Changing the API origin selects a separate origin-scoped browser cart and private cache; existing pointers for the previous origin remain stored and are not silently transferred. Existing sessions on another API hostname are not assumed to transfer.
+
+Lulu exposes password authentication; passkey controls appear only on the API’s existing `https://rc-store.benhalverson.dev` passkey origin. RC credentials are bound to that relying party; enabling Lulu passkeys requires a separate relying-party configuration. DNS, certificates and API hosting for the configured hostname must be provisioned separately.
 
 | Command | Purpose |
 | --- | --- |
@@ -82,6 +86,16 @@ The adapter validates Zod DTOs, reads all API pages and detail memberships befor
 Keep the pinned A2UI renderer/core, Zod and wire versions compatible. Dependency versions are recorded in [package.json](package.json) and [pnpm-lock.yaml](pnpm-lock.yaml); protocol messages use wire **v0.9.1**.
 
 The supplied Lulu logo is embedded losslessly in `public/brand/lulu-logo.svg` as a self-contained PNG-backed SVG. Barlow and Barlow Condensed fonts are bundled through Fontsource. The combined [third-party licenses and notices](public/THIRD_PARTY_LICENSES.txt) ships with the built site at `/THIRD_PARTY_LICENSES.txt`.
+
+## Account and bag handoff
+
+Sign-in, signup, profile and POST signout use the existing Better Auth identity service. The validated local `returnTo` destination survives authentication and explicit bag-restoration retries. Signout and expiry hide private bag data while retaining account-scoped browser pointers; switching accounts and creating another bag preserves the previous account's pointer. Browser storage is an untrusted convenience, never an authorization source.
+
+The API must persist cart ownership independently of lines. `POST /cart/create` receives `{ expectedUserId: string | null }` and returns `{ cartId, ownerId, guestToken? }`, with a guest capability only for anonymous carts. `POST /cart/:cartId/claim` requires credentials, `X-Cart-Token` and `{ expectedUserId: string }`, returning `{ message, ownerId }`. The expected user is a race-detection assertion checked against the authenticated session, never a client-selected owner. Claim retries are confined to the intended account. Reads and mutations include credentials and the guest capability while needed; successful claims stop sending that capability. The API must independently authorize every cart, shipping and payment-preparation request.
+
+Pending writes retain a durable uncertainty marker and are never automatically retried. Account changes, route teardown and authorization denial invalidate their client continuations without cancelling a server mutation that may already have committed. Reads are disposed through the query signal. Recovery explicitly refreshes the bag before another edit.
+
+Configure the API to allow the storefront in both trusted auth origins and credentialed CORS, and disable caching of private responses. Before release, verify cookie retention, expiration and cross-user isolation in Chromium and WebKit against a non-production API. Mocked browser tests establish UI behavior only; CORS alone does not ensure browser acceptance of a cross-site cookie.
 
 ## Password recovery
 
