@@ -30,6 +30,7 @@ import {
 import { useCatalog } from "./storefront/queries";
 import { RecoveryPage } from "./storefront/recovery";
 
+/** Routes customer checkout, account recovery and the Pit Bench storefront. */
 export function App() {
   return (
     <Routes>

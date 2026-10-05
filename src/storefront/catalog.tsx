@@ -649,6 +649,7 @@ const ShoppingComposer = createComponentImplementation(
   },
 );
 
+/** Presents confirmed bag contents and the entry to the server-backed shipping review. */
 const CartPanel = createComponentImplementation(
   {
     name: "CartPanel",

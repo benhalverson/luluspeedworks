@@ -88,6 +88,7 @@ async function request<T>(
   return schema.parse(await response.json());
 }
 
+/** Owns session-scoped cart reads and mutations, exposing the durable review revision. */
 export function useCart(
   origin: string,
   identity: string | null = null,
