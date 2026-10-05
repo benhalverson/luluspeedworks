@@ -56,7 +56,7 @@ export function App() {
 function Storefront() {
   const client = useQueryClient();
   const origin =
-    import.meta.env.VITE_API_ORIGIN || "https://api.benhalverson.dev";
+    import.meta.env.VITE_API_ORIGIN || "https://api.luluspeedworks.com";
   const { snapshot, status, failed, retry } = useCatalog(origin);
   const { pathname, search } = useLocation();
   const benchPath = ["/signin", "/signup", "/profile"].includes(pathname)

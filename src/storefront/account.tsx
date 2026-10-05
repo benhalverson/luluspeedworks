@@ -16,12 +16,13 @@ import {
 } from "./auth";
 import { useCart } from "./cart";
 import { useCartSessionRecovery } from "./cart-session";
-import { AddPasskey } from "./passkey";
+import { AddPasskey, supportsPasskeys } from "./passkey";
 import { ProfilePanel } from "./profile";
 
 /** Credentials stay in React Hook Form, outside the A2UI/model data tree. */
 export function AccountPanel() {
   const session = authClient.useSession();
+  const passkeysSupported = supportsPasskeys();
   useCartSessionRecovery(apiOrigin, session.refetch);
   const user = session.data?.user;
   const bag = useCart(
@@ -244,19 +245,21 @@ export function AccountPanel() {
               {mode === "signup" ? "Create account" : "Sign in with password"}
             </Button>
           </form>
-          <Button
-            className="mt-3"
-            variant="outline"
-            disabled={pending}
-            onClick={() =>
-              login.mutate({
-                kind: "passkey",
-                values: { email: "", password: "", name: "" },
-              })
-            }
-          >
-            Sign in with a passkey
-          </Button>
+          {passkeysSupported ? (
+            <Button
+              className="mt-3"
+              variant="outline"
+              disabled={pending}
+              onClick={() =>
+                login.mutate({
+                  kind: "passkey",
+                  values: { email: "", password: "", name: "" },
+                })
+              }
+            >
+              Sign in with a passkey
+            </Button>
+          ) : null}
           <Link
             className="mt-3 block underline"
             to={`${mode === "signup" ? "/signin" : "/signup"}?returnTo=${encodeURIComponent(destination)}`}
@@ -292,10 +295,12 @@ export function AccountPanel() {
       location.pathname === "/profile" ? (
         <div key={user.id}>
           <ProfilePanel userId={user.id} />
-          <div className="mt-6 border-t border-border pt-5">
-            <h2 className="font-display text-2xl">Account security</h2>
-            <AddPasskey />
-          </div>
+          {passkeysSupported ? (
+            <div className="mt-6 border-t border-border pt-5">
+              <h2 className="font-display text-2xl">Account security</h2>
+              <AddPasskey />
+            </div>
+          ) : null}
         </div>
       ) : null}
       {message ? (

@@ -3,7 +3,10 @@ import { Link } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountPanel } from "../src/storefront/account";
 import { authClient, authenticate } from "../src/storefront/auth";
+import { setBrowserOrigin } from "./browser-origin";
 import { renderWithClient, testClient } from "./query-client";
+
+const initialBrowserOrigin = window.location.origin;
 
 const session = vi.hoisted(() => ({
   data: null as { user: { id: string; email: string } } | null,
@@ -40,7 +43,10 @@ it("links password recovery to the validated sign-in destination", () => {
     screen.getByRole("link", { name: "Forgot password?" }),
   ).toHaveAttribute("href", "/forgot-password?returnTo=%2Fproducts%2F12");
 });
-afterEach(() => Reflect.deleteProperty(navigator, "locks"));
+afterEach(() => {
+  Reflect.deleteProperty(navigator, "locks");
+  setBrowserOrigin(initialBrowserOrigin);
+});
 async function fill(password = "test password") {
   fireEvent.change(screen.getByLabelText("Email"), {
     target: { value: "ben@example.com" },
@@ -70,7 +76,7 @@ it("validates signup and uses React Hook Form without putting credentials in A2U
 });
 it("preserves the guest cart on login and clears private query data", async () => {
   window.history.replaceState(null, "", "/signin?returnTo=%2Fcheckout");
-  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  const key = "lulu-cart-v2:https://api.luluspeedworks.com";
   const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
   localStorage.setItem(
     key,
@@ -117,7 +123,7 @@ it("preserves the guest cart on login and clears private query data", async () =
 it("clears the failed login message when restoring the guest bag succeeds", async () => {
   window.history.replaceState(null, "", "/signin");
   const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
-  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  const key = "lulu-cart-v2:https://api.luluspeedworks.com";
   localStorage.setItem(
     key,
     JSON.stringify({
@@ -168,7 +174,7 @@ it("clears the failed login message when restoring the guest bag succeeds", asyn
 it("claims the guest bag after verified login even while the session hook refreshes", async () => {
   window.history.replaceState(null, "", "/signin?returnTo=%2Fproducts%2F1");
   const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
-  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  const key = "lulu-cart-v2:https://api.luluspeedworks.com";
   localStorage.setItem(
     key,
     JSON.stringify({
@@ -224,6 +230,7 @@ it("claims the guest bag after verified login even while the session hook refres
   ).toBeUndefined();
 });
 it("uses passkeys independently of password validation and shows cancellation failures", async () => {
+  setBrowserOrigin("https://rc-store.benhalverson.dev");
   window.history.replaceState(null, "", "/signin");
   vi.mocked(authenticate).mockRejectedValueOnce(Error("Passkey was cancelled"));
   renderWithClient(<AccountPanel />);
@@ -244,7 +251,7 @@ it("uses passkeys independently of password validation and shows cancellation fa
 });
 it("preserves the account-scoped bag on signout and reports signout failure", async () => {
   session.data = { user: { id: "user-1", email: "ben@example.com" } };
-  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  const key = "lulu-cart-v2:https://api.luluspeedworks.com";
   const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
   localStorage.setItem(
     key,
@@ -274,7 +281,7 @@ it("preserves the account-scoped bag on signout and reports signout failure", as
 it("can retry an interrupted guest claim after the session is restored", async () => {
   session.data = { user: { id: "user-1", email: "ben@example.com" } };
   const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
-  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  const key = "lulu-cart-v2:https://api.luluspeedworks.com";
   localStorage.setItem(
     key,
     JSON.stringify({
@@ -316,6 +323,7 @@ it("can retry an interrupted guest claim after the session is restored", async (
 });
 
 it("opens the existing account's profile and removes its fields on expiry", async () => {
+  setBrowserOrigin("https://rc-store.benhalverson.dev");
   window.history.replaceState(null, "", "/profile");
   session.data = { user: { id: "user-1", email: "ben@example.com" } };
   vi.mocked(fetch).mockResolvedValue(
@@ -416,7 +424,7 @@ it.each(["account", "route", "destination", "unmount"])(
 it("allows the expected session transition and preserves the destination after explicit claim retry", async () => {
   window.history.replaceState(null, "", "/signin?returnTo=%2Fcart");
   const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
-  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  const key = "lulu-cart-v2:https://api.luluspeedworks.com";
   localStorage.setItem(
     key,
     JSON.stringify({
@@ -467,7 +475,7 @@ it("allows the expected session transition and preserves the destination after e
 it("recovers from an API-hidden expired cart into signin while retaining the bag and local destination", async () => {
   window.history.replaceState(null, "", "/signin?returnTo=%2Fcart");
   session.data = { user: { id: "alice", email: "alice@example.com" } };
-  const key = "lulu-cart-v2:https://api.benhalverson.dev";
+  const key = "lulu-cart-v2:https://api.luluspeedworks.com";
   const saved = JSON.stringify({
     cartId: "8cfbf30a-2995-486e-a1e8-8f7d41488f1e",
     ownerId: "alice",
@@ -491,4 +499,22 @@ it("recovers from an API-hidden expired cart into signin while retaining the bag
   await screen.findByRole("button", { name: "Sign in with password" });
   expect(localStorage.getItem(key)).toBe(saved);
   expect(location.search).toBe("?returnTo=%2Fcart");
+});
+
+it("offers password authentication without RC-bound passkeys on Lulu", () => {
+  setBrowserOrigin("https://luluspeedworks.com");
+  window.history.replaceState(null, "", "/signin");
+  const view = renderWithClient(<AccountPanel />);
+  expect(
+    screen.getByRole("button", { name: "Sign in with password" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Sign in with a passkey" }),
+  ).toBeNull();
+  session.data = { user: { id: "alice", email: "alice@example.com" } };
+  window.history.replaceState(null, "", "/profile");
+  view.unmount();
+  renderWithClient(<AccountPanel />);
+  expect(screen.queryByRole("button", { name: "Add a passkey" })).toBeNull();
+  expect(screen.queryByText("Account security")).toBeNull();
 });

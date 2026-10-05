@@ -13,6 +13,7 @@ vi.mock("@better-auth/passkey/client", () => ({
 
 import {
   accountFields,
+  apiOrigin,
   authenticate,
   confirmSession,
   returnDestination,
@@ -101,4 +102,8 @@ it("allows only local known destinations and preserves legacy short signin passw
   expect(signupFields.safeParse({ ...values, password: "short" }).success).toBe(
     false,
   );
+});
+
+it("defaults to the same-site Lulu API", () => {
+  expect(apiOrigin).toBe("https://api.luluspeedworks.com");
 });

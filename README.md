@@ -19,7 +19,11 @@ pnpm dev
 
 Use the Node and pnpm versions pinned in [package.json](package.json) and [.nvmrc](.nvmrc). The setup commands above are for a fresh human development environment; agents use the active shell executables as specified in [AGENTS.md](AGENTS.md). Development and `pnpm exec vite preview` use `http://localhost:3000` with strict ports. The API must allow that frontend origin.
 
-The public build-time `VITE_API_ORIGIN` defaults to `https://api.benhalverson.dev`. For a separately running development API, run `VITE_API_ORIGIN=http://localhost:8787 pnpm dev`; that API must allow the frontend origin. This value is public and must contain no secrets. Public catalog reads omit credentials; auth, bag, profile and private draft requests include credentials. External presigned print uploads omit cookies. No proxy or backend is included. See the [source map](#source-map) for request contracts.
+The public build-time `VITE_API_ORIGIN` defaults to the storefront’s same-site API hostname, `https://api.luluspeedworks.com`. For a separately running development API, run `VITE_API_ORIGIN=http://localhost:8787 pnpm dev`; that API must allow the frontend origin. This value is public and must contain no secrets. Public catalog reads omit credentials; auth, bag, profile and private draft requests include credentials. External presigned print uploads omit cookies. No proxy or backend is included. See the [source map](#source-map) for request contracts.
+
+Changing the API origin selects a separate origin-scoped browser cart and private cache; existing pointers for the previous origin remain stored and are not silently transferred. Existing sessions on another API hostname are not assumed to transfer.
+
+Lulu exposes password authentication; passkey controls appear only on the API’s existing `https://rc-store.benhalverson.dev` passkey origin. The RC relying party and credentials remain unchanged; enabling Lulu passkeys requires a separately agreed configuration. DNS, certificates and API hosting for the configured hostname must be provisioned separately.
 
 | Command | Purpose |
 | --- | --- |

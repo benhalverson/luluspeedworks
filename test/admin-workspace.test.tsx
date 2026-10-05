@@ -398,7 +398,7 @@ it.each([200, 403, 503])(
     } = current();
     const payload = { drafts: [summary] };
     client.setQueryData(
-      ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+      ["admin-drafts", "https://api.luluspeedworks.com", "admin"],
       payload,
     );
     let resolve: ((response: Response) => void) | undefined;
@@ -469,7 +469,7 @@ it.each(
         client.invalidateQueries({
           queryKey: [
             "admin-drafts",
-            "https://api.benhalverson.dev",
+            "https://api.luluspeedworks.com",
             "admin",
             draftId,
           ],
@@ -540,7 +540,7 @@ it.each([200, 503])(
     await ready();
     const accessKey = [
       "admin-draft-access",
-      "https://api.benhalverson.dev",
+      "https://api.luluspeedworks.com",
       "admin",
     ];
     let finish: ((response: Response) => void) | undefined;
@@ -564,7 +564,7 @@ it.each([200, 503])(
       client.invalidateQueries({
         queryKey: [
           "admin-drafts",
-          "https://api.benhalverson.dev",
+          "https://api.luluspeedworks.com",
           "admin",
           draftId,
         ],
@@ -688,7 +688,7 @@ it.each(
       client.invalidateQueries({
         queryKey: [
           source === "detail" ? "admin-drafts" : "admin-draft-access",
-          "https://api.benhalverson.dev",
+          "https://api.luluspeedworks.com",
           "admin",
           ...(source === "detail" ? [draftId] : []),
         ],
@@ -735,7 +735,7 @@ it.each(
       client.invalidateQueries({
         queryKey: [
           "admin-draft-access",
-          "https://api.benhalverson.dev",
+          "https://api.luluspeedworks.com",
           "admin",
         ],
         exact: true,
@@ -757,7 +757,7 @@ it("requires fresh authorization on route re-entry despite an earlier pending sa
   await ready();
   const payload = client.getQueryData([
     "admin-drafts",
-    "https://api.benhalverson.dev",
+    "https://api.luluspeedworks.com",
     "admin",
   ]);
   let resolveSave: ((response: Response) => void) | undefined;
@@ -813,7 +813,11 @@ it("retains authorized edits through a temporary list failure and retries", asyn
       : undefined;
   await act(() =>
     client.invalidateQueries({
-      queryKey: ["admin-draft-access", "https://api.benhalverson.dev", "admin"],
+      queryKey: [
+        "admin-draft-access",
+        "https://api.luluspeedworks.com",
+        "admin",
+      ],
       exact: true,
     }),
   );
@@ -849,7 +853,7 @@ it("ignores an aborted verification response after Strict Mode verifies access a
   );
   await ready();
   expect(signal?.aborted).toBe(true);
-  const listKey = ["admin-drafts", "https://api.benhalverson.dev", "admin"];
+  const listKey = ["admin-drafts", "https://api.luluspeedworks.com", "admin"];
   const verifiedDrafts = client.getQueryData(listKey);
   expect(verifiedDrafts).toMatchObject({ drafts: [{ id: draftId }] });
   await act(() => required(resolveAborted)(Response.json({ drafts: [] })));
@@ -880,7 +884,7 @@ it("rechecks access when the account changes and hides the workspace on sign-out
 
 it("refreshes cached listings and prices on entering Products and through Refresh", async () => {
   const client = testClient();
-  const pageKey = ["catalog", "https://api.benhalverson.dev", "page", 1];
+  const pageKey = ["catalog", "https://api.luluspeedworks.com", "page", 1];
   client.setQueryData(pageKey, apiPage([9]));
   renderWithClient(<App />, client);
   await ready();
@@ -920,7 +924,7 @@ it("falls back for failed catalog images and recovers when the source changes", 
   expect(listing.querySelector("img")).toBeNull();
   act(() =>
     client.setQueryData(
-      ["catalog", "https://api.benhalverson.dev", "page", 1],
+      ["catalog", "https://api.luluspeedworks.com", "page", 1],
       {
         ...apiPage([1, 2]),
         products: apiPage([1, 2]).products.map((product) => ({
@@ -1257,7 +1261,7 @@ it.each(["upload", "recovery", "denial"])(
       client.invalidateQueries({
         queryKey: [
           "admin-drafts",
-          "https://api.benhalverson.dev",
+          "https://api.luluspeedworks.com",
           "admin",
           draftId,
         ],
@@ -1302,7 +1306,7 @@ it("does not start verification when an obsolete discard finishes after denial",
     client.invalidateQueries({
       queryKey: [
         "admin-drafts",
-        "https://api.benhalverson.dev",
+        "https://api.luluspeedworks.com",
         "admin",
         draftId,
       ],
@@ -1683,7 +1687,7 @@ it("restores the last selected draft, handles unavailable context, and reuses an
     }),
   ];
   localStorage.setItem(
-    "lulu-admin-draft:https://api.benhalverson.dev:admin",
+    "lulu-admin-draft:https://api.luluspeedworks.com:admin",
     JSON.stringify(otherId),
   );
   renderWithClient(<App />);
@@ -2284,7 +2288,7 @@ it("serializes duplicate gestures and protects upload and form controls during a
   });
   // Recovering a retained response can repopulate a cache cleared by session teardown.
   client.removeQueries({
-    queryKey: ["admin-drafts", "https://api.benhalverson.dev", "admin"],
+    queryKey: ["admin-drafts", "https://api.luluspeedworks.com", "admin"],
     exact: true,
   });
   await act(() =>

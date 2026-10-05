@@ -35,7 +35,7 @@ const color = {
   profile: "PLA",
   available: true,
 };
-const key = "lulu-cart-v2:https://api.benhalverson.dev";
+const key = "lulu-cart-v2:https://api.luluspeedworks.com";
 const line = {
   id: 91,
   productId: "SKU-101",
@@ -165,7 +165,7 @@ it.each(
     });
     act(() => {
       void client.invalidateQueries({
-        queryKey: ["cart", "https://api.benhalverson.dev", "alice"],
+        queryKey: ["cart", "https://api.luluspeedworks.com", "alice"],
       });
     });
     await waitFor(() => expect(finish).toBeDefined());

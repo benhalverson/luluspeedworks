@@ -3,7 +3,7 @@ import { createAuthClient } from "better-auth/react";
 import { z } from "zod";
 
 export const apiOrigin =
-  import.meta.env.VITE_API_ORIGIN || "https://api.benhalverson.dev";
+  import.meta.env.VITE_API_ORIGIN || "https://api.luluspeedworks.com";
 export const authClient = createAuthClient({
   baseURL: apiOrigin,
   plugins: [passkeyClient()],

@@ -125,7 +125,7 @@ it("loads a direct URL independently, renders authoritative safe detail and UUID
   expect(screen.getByRole("button", { name: /Add to bag/ })).toBeDisabled();
   expect(fetch).toHaveBeenCalledWith(
     new URL(
-      "https://api.benhalverson.dev/v2/colors?profile=PLA&available=true",
+      "https://api.luluspeedworks.com/v2/colors?profile=PLA&available=true",
     ),
     expect.anything(),
   );

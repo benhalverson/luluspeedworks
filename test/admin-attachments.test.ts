@@ -109,7 +109,7 @@ it("sends private draft requests with credentials, no-store, validated JSON and 
     ),
   ).resolves.toEqual({ revision: 4 });
   expect(fetch).toHaveBeenCalledWith(
-    new URL(`https://api.benhalverson.dev/admin/product-drafts/${draftId}`),
+    new URL(`https://api.luluspeedworks.com/admin/product-drafts/${draftId}`),
     expect.objectContaining({
       method: "PUT",
       credentials: "include",
