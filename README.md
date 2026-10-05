@@ -140,6 +140,5 @@ The companion API scope ([#193](https://github.com/benhalverson/3dprinter-farm/i
 owns atomic admission against the $20 UTC-month allowance, conservative reservation
 reconciliation and durable $10/$15/$20 owner alerts. Admission controls are not a
 provider billing guarantee. This frontend does not configure email addresses or
-verify alert delivery. Verified sender, owner recipient and live delivery remain
-operational acceptance gates. Controlled frontend tests do not establish these
-backend/provider outcomes or checkout readiness.
+verify alert delivery. Configure and verify the sender, owner recipient, and email
+delivery through the API deployment process.
