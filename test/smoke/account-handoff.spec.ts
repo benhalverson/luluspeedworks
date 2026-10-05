@@ -119,3 +119,78 @@ test("an expired owned-cart read revalidates the session and preserves the bag f
   ).toMatchObject({ cartId, ownerId: "admin" });
   await expect(page).toHaveURL(/\/signin\?returnTo=%2F$/);
 });
+
+for (const outcome of ["failed", "wrong-owner"] as const) {
+  test(`an ${outcome} claim preserves its guest capability until a verified retry`, async ({
+    page,
+    api,
+  }) => {
+    api.responses.set("GET /api/auth/get-session", { body: null });
+    api.responses.set(`GET /cart/${cartId}`, { body: { items: [], total: 0 } });
+    api.responses.set(
+      `POST /cart/${cartId}/claim`,
+      outcome === "failed"
+        ? { status: 503, body: { error: "Temporary failure" } }
+        : { body: { message: "Cart claimed", ownerId: "other-account" } },
+    );
+    await page.addInitScript(
+      ({ key, id }) => {
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            cartId: id,
+            guestToken: id,
+            ownerId: null,
+            pending: false,
+            revision: crypto.randomUUID(),
+          }),
+        );
+      },
+      { key: storageKey, id: cartId },
+    );
+    await page.goto("/signin?returnTo=%2Fcheckout");
+    await page.getByLabel("Email", { exact: true }).fill(user.email);
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill("controlled smoke password");
+    api.responses.set("POST /api/auth/sign-in/email", {
+      body: { user, token: "fixture", redirect: false },
+    });
+    api.responses.set("GET /api/auth/get-session", { body: verifiedSession });
+    const claim = page.waitForRequest((request) =>
+      request.url().endsWith(`/cart/${cartId}/claim`),
+    );
+    await page.getByRole("button", { name: "Sign in with password" }).click();
+    const attempted = await claim;
+    expect(attempted.postDataJSON()).toEqual({ expectedUserId: user.id });
+    expect(attempted.headers()["x-cart-token"]).toBe(cartId);
+    const restore = page.getByRole("button", { name: "Restore this bag" });
+    await expect(restore).toBeEnabled();
+    expect(
+      await page.evaluate(
+        (key) => JSON.parse(localStorage.getItem(key) ?? "null"),
+        storageKey,
+      ),
+    ).toMatchObject({ cartId, guestToken: cartId, ownerId: user.id });
+    await expect(page).toHaveURL(/\/signin\?returnTo=%2Fcheckout$/);
+    expect(api.requests.some((key) => key.includes("/quotes"))).toBe(false);
+    api.responses.set(`POST /cart/${cartId}/claim`, {
+      body: { message: "Cart claimed", ownerId: user.id },
+    });
+    const retry = page.waitForRequest((request) =>
+      request.url().endsWith(`/cart/${cartId}/claim`),
+    );
+    await restore.click();
+    const retried = await retry;
+    expect(retried.postDataJSON()).toEqual({ expectedUserId: user.id });
+    expect(retried.headers()["x-cart-token"]).toBe(cartId);
+    await expect(page).toHaveURL("/checkout");
+    const saved = await page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key) ?? "null"),
+      storageKey,
+    );
+    expect(saved).toMatchObject({ cartId, ownerId: user.id });
+    expect(saved.guestToken).toBeUndefined();
+    await checkLayout(page);
+  });
+}

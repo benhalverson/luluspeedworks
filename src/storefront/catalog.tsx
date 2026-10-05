@@ -649,6 +649,7 @@ const ShoppingComposer = createComponentImplementation(
   },
 );
 
+/** Presents confirmed bag contents and the entry to the server-backed shipping review. */
 const CartPanel = createComponentImplementation(
   {
     name: "CartPanel",
@@ -724,6 +725,9 @@ const CartPanel = createComponentImplementation(
         <Dialog.Close asChild>
           <Button className="mt-5 w-full">Continue shopping</Button>
         </Dialog.Close>
+        <Link className="mt-4 block underline" to="/checkout">
+          Review shipping and checkout
+        </Link>
       </section>
     </DialogContent>
   ),

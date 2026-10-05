@@ -14,6 +14,7 @@ import { authClient, returnDestination } from "./storefront/auth";
 import { cartActionSchema, useCart } from "./storefront/cart";
 import { useCartSessionRecovery } from "./storefront/cart-session";
 import { cartView } from "./storefront/cart-view";
+import { CheckoutPage } from "./storefront/checkout";
 import {
   type Category,
   createCatalogController,
@@ -30,9 +31,11 @@ import {
 import { useCatalog } from "./storefront/queries";
 import { RecoveryPage } from "./storefront/recovery";
 
+/** Routes customer checkout, account recovery and the Pit Bench storefront. */
 export function App() {
   return (
     <Routes>
+      <Route path="/checkout" element={<CheckoutPage />} />
       <Route path="/admin/products" element={<AdminWorkspace />} />
       <Route
         path="/forgot-password"

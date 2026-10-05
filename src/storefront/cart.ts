@@ -107,7 +107,7 @@ async function request<T>(
   return schema.parse(await response.json());
 }
 
-/** Own cart reads and writes for the current mounted account and browser capability. */
+/** Owns account-scoped cart operations and exposes the durable quote-review revision. */
 export function useCart(
   origin: string,
   identity: string | null = null,
@@ -437,6 +437,8 @@ export function useCart(
       },
     },
     uncertain: saved?.pending === true,
+    cartId: saved?.cartId,
+    revision: saved?.revision,
     claimable: Boolean(saved?.guestToken && identity !== null),
   };
 }
