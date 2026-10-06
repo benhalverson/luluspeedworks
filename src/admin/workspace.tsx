@@ -30,6 +30,13 @@ import {
   productDraftResponseSchema,
 } from "./contracts";
 import {
+  type Action,
+  actionSchema,
+  type MutationResult,
+  mutationResultSchema,
+  preparationResponseSchema,
+} from "./mutations";
+import {
   DraftRequestError,
   draftRequest,
   isAuthorizationFailure,
@@ -65,6 +72,14 @@ const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
 });
+/** Distinguish obsolete ownership from a request whose outcome needs recovery. */
+class WorkspaceVisitEnded extends Error {}
+type MutationAttempt = {
+  draftId: string;
+  preparationId: string;
+  action: Action;
+  operationId?: string;
+};
 type Selection = {
   kind: "photo" | "print";
   replacesId?: string;
@@ -123,7 +138,7 @@ export function AdminWorkspace() {
     );
   return (
     <AuthorizedWorkspace
-      key={session.data.user.id}
+      key={`${session.data.user.id}:${session.data.session?.id ?? ""}`}
       identity={session.data.user.id}
     />
   );
@@ -148,6 +163,9 @@ function AuthorizedWorkspace({ identity }: { identity: string }) {
   const authorization = useQuery({
     queryKey: ["admin-draft-access", apiOrigin, identity],
     queryFn: async ({ signal }) => {
+      const listKey = ["admin-drafts", apiOrigin, identity];
+      const startedWith =
+        client.getQueryData<z.infer<typeof productDraftListSchema>>(listKey);
       try {
         const result = await draftRequest(
           "",
@@ -158,7 +176,26 @@ function AuthorizedWorkspace({ identity }: { identity: string }) {
         );
         signal.throwIfAborted();
         setAccess({ verified: true, denied: false, error: null });
-        client.setQueryData(["admin-drafts", apiOrigin, identity], result);
+        // A list read cannot undo acknowledgements received while it was pending.
+        // A subsequent read starts from those acknowledgements and reconciles normally.
+        client.setQueryData(
+          listKey,
+          (current: z.infer<typeof productDraftListSchema> | undefined) => {
+            const changed = (current?.drafts ?? []).filter(
+              (item) =>
+                item !==
+                startedWith?.drafts.find((prior) => prior.id === item.id),
+            );
+            return {
+              drafts: [
+                ...changed,
+                ...result.drafts.filter(
+                  (item) => !changed.some((saved) => saved.id === item.id),
+                ),
+              ],
+            };
+          },
+        );
         return result;
       } catch (error) {
         signal.throwIfAborted();
@@ -242,14 +279,36 @@ function Workspace({
   onAuthorizationFailure: (error: DraftRequestError) => void;
 }) {
   const mounted = useRef(false);
+  const generation = useRef(0);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      generation.current++;
     };
   }, []);
-  function stopRecovery(error: unknown) {
-    if (!mounted.current) return true;
+  /** A response belongs to the visit that initiated it, even during Strict Mode replay. */
+  function assertVisit(owner: number) {
+    if (!mounted.current || generation.current !== owner)
+      throw new WorkspaceVisitEnded("Workspace visit ended");
+  }
+  /** Check ownership before dispatch and before any response continuation. */
+  async function ownedRequest<T>(...args: Parameters<typeof draftRequest<T>>) {
+    const owner = generation.current;
+    assertVisit(owner);
+    try {
+      return await draftRequest(...args);
+    } finally {
+      assertVisit(owner);
+    }
+  }
+  function stopRecovery(error: unknown, owner = generation.current) {
+    if (
+      !mounted.current ||
+      generation.current !== owner ||
+      error instanceof WorkspaceVisitEnded
+    )
+      return true;
     if (!isAuthorizationFailure(error)) return false;
     mounted.current = false;
     onAuthorizationFailure(error);
@@ -282,7 +341,7 @@ function Workspace({
     /** Keep a delayed read from replacing a newer acknowledged draft revision. */
     queryFn: async ({ signal }) => {
       try {
-        const result = await draftRequest(
+        const result = await ownedRequest(
           `/${id}`,
           productDraftResponseSchema,
           "GET",
@@ -301,6 +360,71 @@ function Workspace({
     gcTime: 0,
   });
   const draft = detail.data;
+  /** Bind operation evidence to the initiating conversation before exposing actions. */
+  async function operationRequest(
+    draftId: string,
+    suffix: string,
+    method = "GET",
+    body?: object,
+    signal?: AbortSignal,
+  ) {
+    const result = await ownedRequest(
+      `/${draftId}/${suffix}`,
+      mutationResultSchema,
+      method,
+      body,
+      signal,
+    );
+    if (result.operation && result.operation.draftId !== draftId)
+      throw new Error("Saved operation does not belong to this draft.");
+    return result;
+  }
+  const preparationKey = [...key, id, "preparation"];
+  const operationKey = [...key, id, "operation"];
+  const preparation = useQuery({
+    queryKey: preparationKey,
+    enabled: Boolean(draft),
+    queryFn: async ({ signal }) => {
+      try {
+        const result = await ownedRequest(
+          `/${id}/preparation`,
+          preparationResponseSchema,
+          "GET",
+          undefined,
+          signal,
+        );
+        signal.throwIfAborted();
+        return result;
+      } catch (error) {
+        if (!signal.aborted) stopRecovery(error);
+        throw error;
+      }
+    },
+    retry: false,
+    gcTime: 0,
+  });
+  const operation = useQuery({
+    queryKey: operationKey,
+    enabled: Boolean(draft),
+    queryFn: async ({ signal }) => {
+      try {
+        const result = await operationRequest(
+          String(id),
+          "operation",
+          "GET",
+          undefined,
+          signal,
+        );
+        signal.throwIfAborted();
+        return result;
+      } catch (error) {
+        if (!signal.aborted) stopRecovery(error);
+        throw error;
+      }
+    },
+    retry: false,
+    gcTime: 0,
+  });
   const [view, setView] = useState<"products" | "conversations">(
     "conversations",
   );
@@ -319,6 +443,11 @@ function Workspace({
   const queued = draft ? queues[draft.id] : undefined;
   const [notice, setNotice] = useState("");
   const [blocked, setBlocked] = useState(false);
+  const [requestedActions, setRequestedActions] = useState<
+    Record<string, Action>
+  >({});
+  const mutationUnresolved = useRef<MutationAttempt | null>(null);
+  const creationUnresolved = useRef(false);
   const locked = useRef(false);
   const photosInput = useRef<HTMLInputElement>(null);
   const printInput = useRef<HTMLInputElement>(null);
@@ -328,7 +457,17 @@ function Workspace({
     retry: false,
   });
   const busy = mutation.isPending;
-  const disabled = busy || blocked;
+  const savedOperation = operation.data?.operation;
+  const needsReconciliation = Boolean(
+    savedOperation &&
+      savedOperation.state !== "failed" &&
+      savedOperation.state !== "succeeded",
+  );
+  const completed =
+    savedOperation?.state === "succeeded" &&
+    (draft?.target.kind === "new" || savedOperation.action === "delete");
+  const disabled = busy || blocked || needsReconciliation || completed;
+  const navigationDisabled = busy || blocked || needsReconciliation;
   const known =
     draft?.context.status === "available" ? draft.context : undefined;
   const answers = draft
@@ -337,6 +476,7 @@ function Workspace({
           ? {
               name: known.product.name,
               description: known.product.description,
+              markupPercentage: known.product.markupPercentage?.toString(),
               inPersonPrice: known.product.inPersonPrice?.toFixed(2),
               filamentType: known.product.filamentType,
               color: known.product.color ?? "",
@@ -373,7 +513,6 @@ function Workspace({
 
   /** Publish results only into the still-authorized mounted workspace. */
   function publish(next: ProductDraft) {
-    if (!mounted.current) return;
     const current = client.getQueryData<ProductDraft>([...key, next.id]);
     if (current && current.revision > next.revision) return;
     client.setQueryData([...key, next.id], next);
@@ -388,7 +527,7 @@ function Workspace({
     );
   }
   async function reload(currentId: string) {
-    const result = await draftRequest(
+    const result = await ownedRequest(
       `/${currentId}`,
       productDraftResponseSchema,
     );
@@ -396,35 +535,116 @@ function Workspace({
     setBlocked(false);
     return result;
   }
+  /** Acknowledged cleanup status must survive list reads already in flight. */
+  function publishCleanup(next: z.infer<typeof draftCleanupResponseSchema>) {
+    setCleanup(next);
+    client.setQueryData(
+      key,
+      (current: z.infer<typeof productDraftListSchema> | undefined) => ({
+        drafts: (current?.drafts ?? []).map((item) =>
+          item.id === next.id && item.revision <= next.revision
+            ? {
+                ...item,
+                revision: next.revision,
+                status: next.status,
+              }
+            : item,
+        ),
+      }),
+    );
+  }
   async function refreshList(throwOnError = true) {
-    if (mounted.current) await list.refetch({ throwOnError });
+    const owner = generation.current;
+    assertVisit(owner);
+    await list.refetch({ throwOnError });
+    assertVisit(owner);
+  }
+  /** Inspect durable evidence without replaying a provider effect. */
+  async function recoverOperation(draftId: string) {
+    const result = await operationRequest(draftId, "operation");
+    client.setQueryData([...key, draftId, "operation"], result);
+    const attempt = mutationUnresolved.current;
+    if (result.operation && (!attempt || matchesAttempt(result, attempt))) {
+      mutationUnresolved.current = null;
+      setBlocked(false);
+      if (result.operation.state === "succeeded") {
+        await reload(draftId);
+        await refreshCatalog();
+      }
+    }
+    return result;
+  }
+  /** Older successful evidence cannot resolve a newer preparation's submission. */
+  function matchesAttempt(result: MutationResult, attempt: MutationAttempt) {
+    const current = result.operation;
+    return Boolean(
+      current &&
+        current.draftId === attempt.draftId &&
+        current.preparationId === attempt.preparationId &&
+        current.action === attempt.action &&
+        (!attempt.operationId || current.id === attempt.operationId),
+    );
+  }
+  /** HTTP success is separate from durable completion and checkout readiness. */
+  function operationNotice(result: MutationResult) {
+    if (!result.operation || mutationUnresolved.current)
+      return "The product operation outcome is unresolved. Reload saved state before retrying.";
+    const current = result.operation;
+    if (current.state !== "succeeded")
+      return (
+        current.error ||
+        `Product operation ${current.state}. Resolve the saved operation before making another catalog change.`
+      );
+    if (current.action === "delete")
+      return "Product deleted. Saved operation and file cleanup are retained.";
+    return `Product ${current.action === "create" ? "created" : "updated"}. ${result.storefrontVisible ? "Visible in the storefront." : "Not visible in the storefront."} ${result.readiness?.checkoutReady ? "Ready for checkout." : `Checkout not ready: ${result.readiness?.reasons.join(", ") || "readiness unavailable"}.`}`;
   }
   function run(
-    work: () => Promise<void>,
+    work: (assertCurrent: () => void) => Promise<void>,
     currentId: string | null | undefined = id,
+    creationStarted: () => boolean = () => false,
+    operationStarted: () => MutationAttempt | null = () => null,
   ) {
-    if (locked.current) return;
+    if (locked.current || !mounted.current) return;
+    const owner = generation.current;
+    const assertCurrent = () => assertVisit(owner);
     locked.current = true;
     setNotice("Saving…");
     mutation.mutate(async () => {
       try {
-        await work();
+        assertCurrent();
+        await work(assertCurrent);
       } catch (error) {
-        if (stopRecovery(error)) return;
+        if (stopRecovery(error, owner)) return;
         setBlocked(true);
         const reason =
           error instanceof Error ? error.message : "Draft request failed.";
         try {
+          const attempt = operationStarted();
+          if (attempt) {
+            mutationUnresolved.current = attempt;
+            const result = await recoverOperation(attempt.draftId);
+            setNotice(`${reason} ${operationNotice(result)}`);
+            return;
+          }
+          if (creationStarted()) {
+            creationUnresolved.current = true;
+            await refreshList();
+            setNotice(
+              `${reason} The creation outcome is unresolved. The conversation list cannot identify the result of this request. Reload saved state to review conversations before leaving this workspace.`,
+            );
+            return;
+          }
           if (currentId) {
             try {
               await reload(currentId);
             } catch (error) {
-              if (stopRecovery(error)) return;
-              const tombstone = await draftRequest(
+              if (stopRecovery(error, owner)) return;
+              const tombstone = await ownedRequest(
                 `/${currentId}/cleanup`,
                 draftCleanupResponseSchema,
               );
-              setCleanup(tombstone);
+              publishCleanup(tombstone);
               if (tombstone.status !== "discarded")
                 throw new Error("Draft reload failed");
               setSelected(tombstone.id);
@@ -440,9 +660,11 @@ function Workspace({
             `${reason} Saved state has been reloaded. Review it before retrying; your typed answers are retained.`,
           );
         } catch (error) {
-          if (stopRecovery(error)) return;
+          if (stopRecovery(error, owner)) return;
           setNotice(
-            `${reason} The saved outcome is unresolved. Reload saved state before making another change.`,
+            creationUnresolved.current
+              ? `${reason} The creation outcome is unresolved. Reload saved state to review conversations before leaving this workspace.`
+              : `${reason} The saved outcome is unresolved. Reload saved state before making another change.`,
           );
         }
       } finally {
@@ -452,7 +674,7 @@ function Workspace({
   }
   /** Persist direct corrections without inference before moving to another draft. */
   async function saveCurrent(currentDraft: ProductDraft) {
-    const result = await draftRequest(
+    const result = await ownedRequest(
       `/${currentDraft.id}/prepare`,
       productDraftResponseSchema,
       "POST",
@@ -460,6 +682,7 @@ function Workspace({
     );
     publish(result);
     clearEdits(currentDraft.id);
+    return result;
   }
   function clearEdits(draftId: string) {
     setEdits((current) => {
@@ -478,33 +701,161 @@ function Workspace({
   }
   /** Save dirty answers before opening a separate immutable-target conversation. */
   function open(target: ProductDraftTarget) {
-    run(async () => {
-      if (draft && edits[draft.id]) await saveCurrent(draft);
-      const existing =
-        target.kind === "existing"
-          ? active.find(
-              (item) =>
-                item.target.kind === "existing" &&
-                item.target.productId === target.productId,
-            )
-          : undefined;
-      if (existing) choose(existing);
-      else {
-        const created = await draftRequest(
-          "",
-          productDraftResponseSchema,
-          "POST",
-          { target },
-        );
-        publish(created);
-        choose(created);
-        setEditing(created.id);
-      }
-    });
+    let creating = false;
+    run(
+      async (assertCurrent) => {
+        if (draft && edits[draft.id]) await saveCurrent(draft);
+        assertCurrent();
+        const existing =
+          target.kind === "existing"
+            ? active.find(
+                (item) =>
+                  item.target.kind === "existing" &&
+                  item.target.productId === target.productId,
+              )
+            : undefined;
+        if (existing) choose(existing);
+        else {
+          creating = true;
+          const created = await ownedRequest(
+            "",
+            productDraftResponseSchema,
+            "POST",
+            { target },
+          );
+          publish(created);
+          choose(created);
+          setEditing(created.id);
+        }
+      },
+      id,
+      () => creating,
+    );
   }
   /** Route validated A2UI actions to draft preparation and explicitly confirmed category creation. */
   function cardAction(action: A2uiClientAction) {
-    if (!draft || disabled || action.context?.draftId !== draft.id) return;
+    if (!draft || busy || action.context?.draftId !== draft.id) return;
+    if (action.name === "reconcile") {
+      if (
+        !savedOperation ||
+        action.context?.operationId !== savedOperation.id ||
+        creationUnresolved.current ||
+        !operationAllowed
+      )
+        return;
+      const attempt: MutationAttempt = {
+        draftId: draft.id,
+        preparationId: savedOperation.preparationId,
+        action: savedOperation.action,
+        operationId: savedOperation.id,
+      };
+      run(
+        async (assertCurrent) => {
+          await client.cancelQueries({ queryKey: operationKey, exact: true });
+          assertCurrent();
+          const result = await operationRequest(draft.id, "reconcile", "POST", {
+            operationId: savedOperation.id,
+          });
+          if (!matchesAttempt(result, attempt))
+            throw new Error(
+              "Product operation evidence does not match the confirmed action.",
+            );
+          client.setQueryData(operationKey, result);
+          mutationUnresolved.current = null;
+          setBlocked(false);
+          setNotice(operationNotice(result));
+          await reload(draft.id);
+          await refreshCatalog();
+        },
+        draft.id,
+        undefined,
+        () => attempt,
+      );
+      return;
+    }
+    if (action.name === "manage") {
+      if (
+        mutationUnresolved.current ||
+        savedOperation?.state !== "succeeded" ||
+        savedOperation.action !== "create" ||
+        action.context?.productId !== savedOperation.productId ||
+        !savedOperation.productId
+      )
+        return;
+      open({ kind: "existing", productId: savedOperation.productId });
+      return;
+    }
+    if (disabled) return;
+    if (action.name === "review") {
+      const requested = actionSchema.safeParse(action.context?.action);
+      if (
+        !requested.success ||
+        (draft.target.kind === "new"
+          ? requested.data !== "create"
+          : requested.data === "create")
+      )
+        return;
+      setRequestedActions((current) => ({
+        ...current,
+        [draft.id]: requested.data,
+      }));
+      run(async (assertCurrent) => {
+        const latest = edits[draft.id] ? await saveCurrent(draft) : draft;
+        await client.cancelQueries({ queryKey: preparationKey, exact: true });
+        assertCurrent();
+        const result = await ownedRequest(
+          `/${draft.id}/pricing/prepare`,
+          preparationResponseSchema,
+          "POST",
+          { expectedRevision: latest.revision, action: requested.data },
+        );
+        client.setQueryData(preparationKey, result);
+        setNotice(
+          "Product review updated. Confirm the matching action to change the catalog.",
+        );
+      });
+      return;
+    }
+    if (action.name === "submit") {
+      const requested = actionSchema.safeParse(action.context?.action);
+      if (
+        !requested.success ||
+        !canSubmit ||
+        requested.data !== selectedAction ||
+        !prepared
+      )
+        return;
+      const attempt: MutationAttempt = {
+        draftId: draft.id,
+        preparationId: prepared.id,
+        action: requested.data,
+      };
+      run(
+        async (assertCurrent) => {
+          await client.cancelQueries({ queryKey: operationKey, exact: true });
+          assertCurrent();
+          const result = await operationRequest(draft.id, "submit", "POST", {
+            expectedRevision: draft.revision,
+            preparationId: prepared.id,
+            action: requested.data,
+          });
+          client.setQueryData(operationKey, result);
+          if (!matchesAttempt(result, attempt)) {
+            mutationUnresolved.current = attempt;
+            setBlocked(true);
+            setNotice(operationNotice(result));
+            return;
+          }
+          setNotice(operationNotice(result));
+          await reload(draft.id);
+          await refreshCatalog();
+        },
+        draft.id,
+        undefined,
+        () => attempt,
+      );
+      return;
+    }
     if (action.name === "confirmCategory") {
       const name = z.string().safeParse(action.context?.name);
       if (
@@ -513,7 +864,7 @@ function Workspace({
       )
         return;
       run(async () => {
-        const next = await draftRequest(
+        const next = await ownedRequest(
           `/${draft.id}/prepare`,
           productDraftResponseSchema,
           "POST",
@@ -600,7 +951,7 @@ function Workspace({
     if (!attachment && !transfer) return;
     if (action.name === "resolve" && transfer) {
       run(async () => {
-        const result = await draftRequest(
+        const result = await ownedRequest(
           `/${draft.id}/attachments/transfers/${transfer.id}/confirm`,
           attachmentEnvelopeSchema,
           "POST",
@@ -616,7 +967,7 @@ function Workspace({
       let next: ProductDraft;
       if (action.name === "delete")
         next = (
-          await draftRequest(
+          await ownedRequest(
             `/${draft.id}/attachments/${transfer?.attachmentId ?? attachmentId}?expectedRevision=${draft.revision}`,
             attachmentEnvelopeSchema,
             "DELETE",
@@ -624,7 +975,7 @@ function Workspace({
         ).draft;
       else if (photo && action.name === "primary")
         next = (
-          await draftRequest(
+          await ownedRequest(
             `/${draft.id}/attachments`,
             attachmentEnvelopeSchema,
             "PATCH",
@@ -642,7 +993,7 @@ function Workspace({
         order.splice(index, 1);
         order.splice(destination, 0, attachmentId);
         next = (
-          await draftRequest(
+          await ownedRequest(
             `/${draft.id}/attachments`,
             attachmentEnvelopeSchema,
             "PATCH",
@@ -688,7 +1039,7 @@ function Workspace({
     });
   }
   function continueUploads(start: ProductDraft, queue: UploadQueue) {
-    run(async () => {
+    run(async (assertCurrent) => {
       let latest = start;
       const remaining = [...queue.files];
       const errors = [...queue.errors];
@@ -716,17 +1067,17 @@ function Workspace({
             publish,
             queue.selection.replacesId,
             queue.selection.retry,
+            assertCurrent,
           );
-          if (!mounted.current) return;
           saved++;
         } catch (error) {
+          assertCurrent();
           if (stopRecovery(error)) return;
           errors.push(
             `${file.name}: ${error instanceof Error ? error.message : "Transfer failed."}`,
           );
           retain();
           latest = await reload(start.id);
-          if (!mounted.current) return;
           if (
             !(
               error instanceof DraftRequestError &&
@@ -760,6 +1111,49 @@ function Workspace({
         .map((categoryId) => `#${categoryId}`)
         .join(", ");
   const interpretation = draft?.state.interpretation;
+  const prepared = preparation.data?.preparation;
+  const operationAllowed =
+    !mutationUnresolved.current ||
+    Boolean(
+      operation.data &&
+        matchesAttempt(operation.data, mutationUnresolved.current),
+    );
+  const selectedAction: Action =
+    (id && requestedActions[id]) ||
+    (draft?.target.kind === "existing" &&
+    prepared?.snapshot?.action === "delete"
+      ? "delete"
+      : undefined) ||
+    (draft?.target.kind === "new" ? "create" : "update");
+  const matchesTarget =
+    prepared?.snapshot?.target.kind === draft?.target.kind &&
+    (draft?.target.kind !== "existing" ||
+      (prepared?.snapshot?.target.kind === "existing" &&
+        prepared.snapshot.target.productId === draft.target.productId));
+  const canSubmit = Boolean(
+    draft &&
+      !disabled &&
+      !edits[draft.id] &&
+      !queued?.files.length &&
+      operation.isSuccess &&
+      !(savedOperation && savedOperation.preparationId === prepared?.id) &&
+      prepared?.status === "ready" &&
+      prepared.readiness.ready &&
+      prepared.draftRevision === draft.revision &&
+      prepared.snapshot?.action === selectedAction &&
+      matchesTarget,
+  );
+  const review = prepared
+    ? [
+        prepared.snapshot
+          ? `${prepared.snapshot.name} · ${selectedAction}`
+          : "Review unavailable",
+        `Production cost: ${prepared.pricing.productionCost === null ? "Unavailable" : money.format(prepared.pricing.productionCost)}`,
+        `Online price: ${prepared.pricing.onlinePrice === null ? "Unavailable" : money.format(prepared.pricing.onlinePrice)}`,
+        `In-person price: ${prepared.pricing.inPersonPrice === null ? "Unavailable" : money.format(prepared.pricing.inPersonPrice)}`,
+        ...prepared.validation.map((item) => item.message),
+      ].join("\n")
+    : "Review the product to verify pricing and catalog details.";
   const card: CardView | undefined = draft
     ? {
         draftId: draft.id,
@@ -768,7 +1162,34 @@ function Workspace({
           (draft.context.status === "available"
             ? draft.context.product.name
             : title(draft)),
-        busy: disabled,
+        busy: busy || (blocked && !mutationUnresolved.current),
+        mutation: {
+          action: selectedAction,
+          ready: canSubmit,
+          completed: completed || Boolean(mutationUnresolved.current),
+          review,
+          status: operation.data?.operation
+            ? operationNotice(operation.data)
+            : preparation.isError || operation.isError
+              ? "Saved product review unavailable. Review again before confirming an action."
+              : prepared && prepared.draftRevision !== draft.revision
+                ? "Review is stale. Review the latest draft before confirming."
+                : prepared
+                  ? `Product review ${prepared.status}.`
+                  : "No catalog action has been prepared.",
+          ...(operationAllowed &&
+          savedOperation &&
+          (needsReconciliation ||
+            savedOperation.cleanup.some((item) => item.status === "pending"))
+            ? { operationId: savedOperation.id }
+            : {}),
+          ...(!mutationUnresolved.current &&
+          savedOperation?.state === "succeeded" &&
+          savedOperation.action === "create" &&
+          savedOperation.productId
+            ? { productId: savedOperation.productId }
+            : {}),
+        },
         questions: draft.state.pendingQuestions
           .map((question) => question.prompt)
           .join("\n"),
@@ -886,7 +1307,10 @@ function Workspace({
       Boolean(draft.state.interpretation) ||
       draft.state.pendingQuestions.length > 0 ||
       draft.attachments.transfers.some((item) => item.status !== "saved") ||
-      draft.attachments.validation.length > 0);
+      draft.attachments.validation.length > 0 ||
+      Boolean(prepared) ||
+      Boolean(savedOperation) ||
+      mutationUnresolved.current?.draftId === draft.id);
   const history = draft
     ? draft.state.history.map((item, position) => ({
         ...item,
@@ -943,7 +1367,7 @@ function Workspace({
           </Button>
         </nav>
         <Button
-          disabled={disabled || !list.isSuccess}
+          disabled={navigationDisabled || !list.isSuccess}
           onClick={() => open({ kind: "new" })}
         >
           + New product
@@ -970,14 +1394,34 @@ function Workspace({
             <Button
               disabled={busy}
               onClick={() =>
-                run(async () => {
-                  if (id) await reload(id);
-                  else {
-                    await refreshList();
-                    setBlocked(false);
-                  }
-                  setNotice("Saved state reloaded. Review before continuing.");
-                })
+                run(
+                  async () => {
+                    if (mutationUnresolved.current) {
+                      const result = await recoverOperation(
+                        mutationUnresolved.current.draftId,
+                      );
+                      setNotice(operationNotice(result));
+                      return;
+                    }
+                    if (creationUnresolved.current) {
+                      await refreshList();
+                      setNotice(
+                        "The creation outcome is unresolved. Saved conversations have been reloaded, but cannot identify the result of the creation request. Review conversations before leaving this workspace.",
+                      );
+                      return;
+                    }
+                    if (id) await reload(id);
+                    else {
+                      await refreshList();
+                      setBlocked(false);
+                    }
+                    setNotice(
+                      "Saved state reloaded. Review before continuing.",
+                    );
+                  },
+                  id,
+                  () => creationUnresolved.current,
+                )
               }
             >
               Reload saved state
@@ -1012,7 +1456,7 @@ function Workspace({
                 disabled={disabled}
                 onClick={() =>
                   run(async () => {
-                    const result = await draftRequest(
+                    const result = await ownedRequest(
                       `/${cleanupView.id}/cleanup/retry`,
                       draftCleanupResponseSchema,
                       "POST",
@@ -1022,8 +1466,8 @@ function Workspace({
                       await reload(result.id);
                       setCleanup(null);
                     } else {
-                      setCleanup(
-                        await draftRequest(
+                      publishCleanup(
+                        await ownedRequest(
                           `/${result.id}/cleanup`,
                           draftCleanupResponseSchema,
                         ),
@@ -1082,7 +1526,7 @@ function Workspace({
                       <button
                         type="button"
                         key={product.id}
-                        disabled={disabled || !list.isSuccess}
+                        disabled={navigationDisabled || !list.isSuccess}
                         onClick={() =>
                           open({ kind: "existing", productId: product.id })
                         }
@@ -1212,7 +1656,7 @@ function Workspace({
                       event.preventDefault();
                       if (!message.trim() || disabled) return;
                       run(async () => {
-                        const next = await draftRequest(
+                        const next = await ownedRequest(
                           `/${draft.id}/prepare`,
                           productDraftResponseSchema,
                           "POST",
@@ -1335,12 +1779,12 @@ function Workspace({
                     disabled={disabled}
                     onClick={() =>
                       run(async () => {
-                        const result = await draftRequest(
+                        const result = await ownedRequest(
                           `/${draft.id}?expectedRevision=${draft.revision}`,
                           draftCleanupResponseSchema,
                           "DELETE",
                         );
-                        setCleanup(result);
+                        publishCleanup(result);
                         setSelected(result.id);
                         setSavedId(null);
                         await refreshList(false);
@@ -1374,16 +1818,16 @@ function Workspace({
                   variant="outline"
                   className="h-auto w-full justify-start whitespace-normal py-3 text-left"
                   aria-pressed={item.id === (discarded?.id ?? id)}
-                  disabled={disabled}
+                  disabled={navigationDisabled}
                   onClick={() =>
                     run(async () => {
                       if (item.status === "discarded") {
-                        const result = await draftRequest(
+                        const result = await ownedRequest(
                           `/${item.id}/cleanup`,
                           draftCleanupResponseSchema,
                         );
                         choose(item);
-                        setCleanup(result);
+                        publishCleanup(result);
                       } else choose(item);
                     })
                   }

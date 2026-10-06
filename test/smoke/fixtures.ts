@@ -105,6 +105,25 @@ export const test = base.extend<{
         else if (key === "GET /admin/product-drafts")
           reply = { body: draftList(current) };
         else if (
+          request.method() === "GET" &&
+          url.pathname.endsWith("/preparation") &&
+          url.pathname.startsWith("/admin/product-drafts/")
+        )
+          reply = { body: { preparation: null } };
+        else if (
+          request.method() === "GET" &&
+          url.pathname.endsWith("/operation") &&
+          url.pathname.startsWith("/admin/product-drafts/")
+        )
+          reply = {
+            body: {
+              operation: null,
+              product: null,
+              readiness: null,
+              storefrontVisible: false,
+            },
+          };
+        else if (
           url.pathname === `/admin/product-drafts/${current.id}` ||
           url.pathname === `/admin/product-drafts/${current.id}/prepare`
         ) {

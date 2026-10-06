@@ -1,6 +1,7 @@
 import { act, screen } from "@testing-library/react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
+import "../src/App";
 
 vi.mock("react-dom/client", { spy: true });
 

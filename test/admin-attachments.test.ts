@@ -432,3 +432,166 @@ it.each([
     expect(fetch).toHaveBeenCalledTimes(2);
   },
 );
+
+function lifetime() {
+  let current = true;
+  return {
+    invalidate: () => {
+      current = false;
+    },
+    assertCurrent: () => {
+      if (!current) throw new Error("Workspace lifetime ended");
+    },
+  };
+}
+
+it("does not request an intent after its workspace lifetime ends", async () => {
+  responses("photo");
+  const owner = lifetime();
+  owner.invalidate();
+  await expect(
+    transferFile(
+      draft(),
+      file(),
+      "photo",
+      vi.fn(),
+      undefined,
+      undefined,
+      owner.assertCurrent,
+    ),
+  ).rejects.toThrow("Workspace lifetime ended");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("does not publish a late intent or start its upload after lifetime invalidation", async () => {
+  const { pending, saved, fetcher } = responses("photo");
+  const intent = Response.json({
+    draft: pending,
+    transfer: {
+      id: transferId,
+      upload: { method: "PUT", url: "/upload", headers: {} },
+    },
+  });
+  fetcher.mockReset();
+  fetcher.mockImplementation(async () => Response.json({ draft: saved }));
+  let resolveIntent!: (response: Response) => void;
+  fetcher.mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        resolveIntent = resolve;
+      }),
+  );
+  const owner = lifetime();
+  const publish = vi.fn();
+  const operation = transferFile(
+    draft(),
+    file(),
+    "photo",
+    publish,
+    undefined,
+    undefined,
+    owner.assertCurrent,
+  );
+  const rejected = expect(operation).rejects.toThrow(
+    "Workspace lifetime ended",
+  );
+  owner.invalidate();
+  resolveIntent(intent);
+  await rejected;
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(publish).not.toHaveBeenCalled();
+});
+
+it("does not confirm uploaded print bytes after lifetime invalidation", async () => {
+  const { pending, saved, fetcher } = responses("print");
+  const intent = Response.json({
+    draft: pending,
+    transfer: {
+      id: transferId,
+      upload: {
+        method: "PUT",
+        url: "https://uploads.example.test/presigned",
+        headers: {},
+      },
+    },
+  });
+  fetcher.mockReset();
+  fetcher.mockImplementation(async () => Response.json({ draft: saved }));
+  let resolveUpload!: (response: Response) => void;
+  fetcher.mockResolvedValueOnce(intent).mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        resolveUpload = resolve;
+      }),
+  );
+  const owner = lifetime();
+  const publish = vi.fn();
+  const operation = transferFile(
+    draft(),
+    file("part.stl"),
+    "print",
+    publish,
+    undefined,
+    undefined,
+    owner.assertCurrent,
+  );
+  const rejected = expect(operation).rejects.toThrow(
+    "Workspace lifetime ended",
+  );
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  owner.invalidate();
+  resolveUpload(new Response(null, { status: 200 }));
+  await rejected;
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(publish.mock.calls).toEqual([[pending]]);
+});
+
+it.each(["photo", "print"] as const)(
+  "does not publish a late %s result after response parsing",
+  async (kind) => {
+    const { saved, fetcher } = responses(kind);
+    const response = Response.json({ draft: saved });
+    let resolveBody!: (body: { draft: ProductDraft }) => void;
+    vi.spyOn(response, "json").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveBody = resolve;
+        }),
+    );
+    const pending = draft();
+    pending.revision++;
+    pending.attachments.transfers = [transfer({ kind, status: "pending" })];
+    fetcher.mockReset();
+    fetcher.mockResolvedValueOnce(
+      Response.json({
+        draft: pending,
+        transfer: {
+          id: transferId,
+          upload: { method: "PUT", url: "/upload", headers: {} },
+        },
+      }),
+    );
+    if (kind === "print")
+      fetcher.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    fetcher.mockResolvedValueOnce(response);
+    const owner = lifetime();
+    const publish = vi.fn();
+    const operation = transferFile(
+      draft(),
+      file(),
+      kind,
+      publish,
+      undefined,
+      undefined,
+      owner.assertCurrent,
+    );
+    const rejected = expect(operation).rejects.toThrow(
+      "Workspace lifetime ended",
+    );
+    await vi.waitFor(() => expect(response.json).toHaveBeenCalled());
+    owner.invalidate();
+    resolveBody({ draft: saved });
+    await rejected;
+    expect(publish.mock.calls).toEqual([[pending]]);
+  },
+);

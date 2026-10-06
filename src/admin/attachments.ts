@@ -47,9 +47,11 @@ export async function transferFile(
   publish: (draft: ProductDraft) => void,
   replacesId?: string,
   retry?: AttachmentTransfer,
+  assertCurrent: () => void = () => {},
 ) {
   if (retry && (file.name !== retry.name || file.size !== retry.size))
     throw new Error(`Reselect ${retry.name} (${retry.size} bytes).`);
+  assertCurrent();
   const intent = await draftRequest(
     `/${draft.id}/attachments/${retry ? `transfers/${retry.id}/retry` : "intents"}`,
     intentEnvelopeSchema,
@@ -64,6 +66,7 @@ export async function transferFile(
           ...(replacesId ? { replacesId } : {}),
         },
   );
+  assertCurrent();
   publish(intent.draft);
   const upload = intent.transfer.upload;
   if (!upload) return savedTransfer(intent.draft, intent.transfer.id);
@@ -74,6 +77,7 @@ export async function transferFile(
     credentials: kind === "photo" ? "include" : "omit",
     signal: AbortSignal.timeout(120_000),
   });
+  assertCurrent();
   if (!response.ok) {
     const error =
       kind === "photo"
@@ -98,6 +102,7 @@ export async function transferFile(
           "POST",
           { expectedRevision: intent.draft.revision },
         );
+  assertCurrent();
   publish(result.draft);
   return savedTransfer(result.draft, intent.transfer.id);
 }

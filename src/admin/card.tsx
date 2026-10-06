@@ -220,6 +220,21 @@ const Attachment = createComponentImplementation(
     );
   },
 );
+const mutationViewSchema = z.object({
+  action: z.enum(["create", "update", "delete"]),
+  ready: z.boolean(),
+  review: z.string(),
+  status: z.string(),
+  operationId: z.string().optional(),
+  productId: z.number().int().positive().optional(),
+  completed: z.boolean().optional(),
+});
+const mutationLabels = {
+  create: "Create product",
+  update: "Update product",
+  delete: "Delete product",
+};
+
 const ProductCard = createComponentImplementation(
   {
     name: "ProductCard",
@@ -228,6 +243,7 @@ const ProductCard = createComponentImplementation(
       title: CommonSchemas.DynamicString,
       summary: CommonSchemas.DynamicString,
       actionLabel: CommonSchemas.DynamicString,
+      mutation: mutationViewSchema.optional(),
       fields: CommonSchemas.ChildList,
       attachments: CommonSchemas.ChildList,
       confirmations: z.array(
@@ -239,104 +255,222 @@ const ProductCard = createComponentImplementation(
     }),
   },
   /** Render the single inline preparation card through approved A2UI bindings. */
-  ({ props, buildChild, context }) => (
-    <section
-      aria-label="Product Card"
-      className="my-6 rounded-lg border border-border bg-card p-4 tablet:p-6"
-    >
-      <p className="text-xs font-semibold uppercase tracking-widest text-primary">
-        Product Card
-      </p>
-      <h2 className="mt-2 font-display text-3xl font-semibold">
-        {props.title}
-      </h2>
-      <p className="my-3 whitespace-pre-wrap text-sm text-muted-foreground">
-        {props.questions}
-      </p>
-      <p className="my-3 text-sm">{props.summary}</p>
-      <label className="my-3 grid gap-2 text-sm">
-        Correct a detail
-        <select
-          className="rounded border border-border bg-background p-2"
-          disabled={props.busy}
-          value=""
-          onChange={(event) =>
-            void context.dispatchAction({
-              event: {
-                name: "correction",
-                context: { draftId: props.draftId, field: event.target.value },
-              },
-            })
-          }
-        >
-          <option value="" disabled>
-            Choose a detail
-          </option>
-          <option value="name">Product name</option>
-          <option value="description">Description</option>
-          <option value="filamentType">Material</option>
-          <option value="color">Color</option>
-          <option value="markupPercentage">Online markup percentage</option>
-          <option value="inPersonPrice">In-person price</option>
-          <option value="categoryNames">Category names</option>
-          <option value="categoryIds">Existing categories</option>
-          <option value="notes">Notes</option>
-        </select>
-      </label>
-      <div className="grid gap-4 bench:grid-cols-2">
-        {props.fields.map((child) =>
-          typeof child === "string"
-            ? buildChild(child)
-            : buildChild(child.id, child.basePath),
-        )}
-      </div>
-      <ul
-        aria-label="Draft attachments"
-        className="my-5 grid gap-3 tablet:grid-cols-2"
+  ({ props, buildChild, context }) => {
+    const mutation = props.mutation;
+    const catalogLocked =
+      props.busy ||
+      Boolean(mutation?.completed) ||
+      Boolean(mutation?.operationId);
+    return (
+      <section
+        aria-label="Product Card"
+        className="my-6 rounded-lg border border-border bg-card p-4 tablet:p-6"
       >
-        {props.attachments.map((child) =>
-          typeof child === "string"
-            ? buildChild(child)
-            : buildChild(child.id, child.basePath),
-        )}
-      </ul>
-      {props.confirmations.map(({ name, confirmed }) => (
+        <p className="text-xs font-semibold uppercase tracking-widest text-primary">
+          Product Card
+        </p>
+        <h2 className="mt-2 font-display text-3xl font-semibold">
+          {props.title}
+        </h2>
+        <p className="my-3 whitespace-pre-wrap text-sm text-muted-foreground">
+          {props.questions}
+        </p>
+        <p className="my-3 text-sm">{props.summary}</p>
+        <label className="my-3 grid gap-2 text-sm">
+          Correct a detail
+          <select
+            className="rounded border border-border bg-background p-2"
+            disabled={catalogLocked}
+            value=""
+            onChange={(event) =>
+              void context.dispatchAction({
+                event: {
+                  name: "correction",
+                  context: {
+                    draftId: props.draftId,
+                    field: event.target.value,
+                  },
+                },
+              })
+            }
+          >
+            <option value="" disabled>
+              Choose a detail
+            </option>
+            <option value="name">Product name</option>
+            <option value="description">Description</option>
+            <option value="filamentType">Material</option>
+            <option value="color">Color</option>
+            <option value="markupPercentage">Online markup percentage</option>
+            <option value="inPersonPrice">In-person price</option>
+            <option value="categoryNames">Category names</option>
+            <option value="categoryIds">Existing categories</option>
+            <option value="notes">Notes</option>
+          </select>
+        </label>
+        <div className="grid gap-4 bench:grid-cols-2">
+          {props.fields.map((child) =>
+            typeof child === "string"
+              ? buildChild(child)
+              : buildChild(child.id, child.basePath),
+          )}
+        </div>
+        <ul
+          aria-label="Draft attachments"
+          className="my-5 grid gap-3 tablet:grid-cols-2"
+        >
+          {props.attachments.map((child) =>
+            typeof child === "string"
+              ? buildChild(child)
+              : buildChild(child.id, child.basePath),
+          )}
+        </ul>
+        {props.confirmations.map(({ name, confirmed }) => (
+          <Button
+            key={name}
+            variant="outline"
+            disabled={catalogLocked || confirmed}
+            onClick={() =>
+              void context.dispatchAction({
+                event: {
+                  name: "confirmCategory",
+                  context: { draftId: props.draftId, name },
+                },
+              })
+            }
+          >
+            {confirmed ? `Confirmed: ${name}` : `Confirm new category: ${name}`}
+          </Button>
+        ))}
+        <p role="status" className="my-3 text-sm">
+          {props.status}
+        </p>
         <Button
-          key={name}
-          variant="outline"
-          disabled={props.busy || confirmed}
+          disabled={catalogLocked}
           onClick={() =>
             void context.dispatchAction({
-              event: {
-                name: "confirmCategory",
-                context: { draftId: props.draftId, name },
-              },
+              event: { name: "save", context: { draftId: props.draftId } },
             })
           }
         >
-          {confirmed ? `Confirmed: ${name}` : `Confirm new category: ${name}`}
+          Save draft answers
         </Button>
-      ))}
-      <p role="status" className="my-3 text-sm">
-        {props.status}
-      </p>
-      <Button
-        disabled={props.busy}
-        onClick={() =>
-          void context.dispatchAction({
-            event: { name: "save", context: { draftId: props.draftId } },
-          })
-        }
-      >
-        Save draft answers
-      </Button>
-      <p className="my-3 text-sm text-muted-foreground">
-        Preparation only. Saving answers never creates, publishes, updates or
-        deletes a product.
-      </p>
-      <Button disabled>{props.actionLabel}</Button>
-    </section>
-  ),
+        <p className="my-3 text-sm text-muted-foreground">
+          {mutation
+            ? "Review prices and details, then explicitly confirm the catalog action. Saving draft answers does not change the catalog."
+            : "Preparation only. Saving answers never creates, publishes, updates or deletes a product."}
+        </p>
+        {mutation ? (
+          <div className="grid gap-3">
+            <p className="whitespace-pre-wrap text-sm">{mutation.review}</p>
+            <p role="status" className="text-sm">
+              {mutation.status}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                disabled={catalogLocked}
+                onClick={() =>
+                  void context.dispatchAction({
+                    event: {
+                      name: "review",
+                      context: {
+                        draftId: props.draftId,
+                        action: mutation.action,
+                      },
+                    },
+                  })
+                }
+              >
+                Review{" "}
+                {mutation.action === "delete"
+                  ? "product deletion"
+                  : "product changes"}
+              </Button>
+              {mutation.action !== "create" ? (
+                <Button
+                  variant="outline"
+                  disabled={catalogLocked}
+                  onClick={() =>
+                    void context.dispatchAction({
+                      event: {
+                        name: "review",
+                        context: {
+                          draftId: props.draftId,
+                          action:
+                            mutation.action === "update" ? "delete" : "update",
+                        },
+                      },
+                    })
+                  }
+                >
+                  {mutation.action === "update"
+                    ? "Review product deletion"
+                    : "Review product changes"}
+                </Button>
+              ) : null}
+              <Button
+                disabled={catalogLocked || !mutation.ready}
+                onClick={() =>
+                  void context.dispatchAction({
+                    event: {
+                      name: "submit",
+                      context: {
+                        draftId: props.draftId,
+                        action: mutation.action,
+                      },
+                    },
+                  })
+                }
+              >
+                {mutationLabels[mutation.action]}
+              </Button>
+              {mutation.productId ? (
+                <Button
+                  variant="outline"
+                  disabled={props.busy}
+                  onClick={() =>
+                    void context.dispatchAction({
+                      event: {
+                        name: "manage",
+                        context: {
+                          draftId: props.draftId,
+                          productId: mutation.productId,
+                        },
+                      },
+                    })
+                  }
+                >
+                  Manage created product
+                </Button>
+              ) : null}
+              {mutation.operationId ? (
+                <Button
+                  variant="outline"
+                  disabled={props.busy}
+                  onClick={() =>
+                    void context.dispatchAction({
+                      event: {
+                        name: "reconcile",
+                        context: {
+                          draftId: props.draftId,
+                          operationId: mutation.operationId,
+                        },
+                      },
+                    })
+                  }
+                >
+                  Check product operation
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <Button disabled>{props.actionLabel}</Button>
+        )}
+      </section>
+    );
+  },
 );
 export const adminCatalog = new Catalog(
   "https://luluspeedworks.com/catalog/admin/v1",
@@ -347,6 +481,7 @@ export type CardView = {
   title: string;
   summary: string;
   actionLabel: string;
+  mutation?: z.infer<typeof mutationViewSchema>;
   confirmations: { name: string; confirmed: boolean }[];
   questions: string;
   status: string;
@@ -472,6 +607,7 @@ export function DraftCard({
               fields: view.fields.map((field) => `field-${field.field}`),
               attachments: { componentId: "attachment", path: "/attachments" },
               confirmations: view.confirmations,
+              ...(view.mutation ? { mutation: view.mutation } : {}),
             },
             ...view.fields.map((field) => ({
               id: `field-${field.field}`,

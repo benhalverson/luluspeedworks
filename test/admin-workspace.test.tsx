@@ -24,7 +24,10 @@ import { apiPage, categories } from "./catalog-fixtures";
 import { renderWithClient, testClient } from "./query-client";
 
 const session = vi.hoisted(() => ({
-  data: { user: { id: "admin" } } as { user: { id: string } } | null,
+  data: { user: { id: "admin" } } as {
+    user: { id: string };
+    session?: { id: string };
+  } | null,
   isPending: false,
   error: null as Error | null,
 }));
@@ -92,6 +95,15 @@ beforeEach(() => {
         status: current.status,
         cleanup: current.attachments.cleanup,
       });
+    if (method === "GET" && path.endsWith("/preparation"))
+      return Response.json({ preparation: null });
+    if (method === "GET" && path.endsWith("/operation"))
+      return Response.json({
+        operation: null,
+        product: null,
+        readiness: null,
+        storefrontVisible: false,
+      });
     if (method === "GET")
       return current.status === "active"
         ? Response.json(current)
@@ -141,6 +153,19 @@ beforeEach(() => {
 const click = (name: string) =>
   fireEvent.click(screen.getByRole("button", { name }));
 const ready = () => screen.findByRole("button", { name: "Edit draft facts" });
+const restoredReads = (client: ReturnType<typeof testClient>) =>
+  waitFor(() => {
+    for (const resource of ["preparation", "operation"])
+      expect(
+        client.getQueryState([
+          "admin-drafts",
+          "https://api.luluspeedworks.com",
+          session.data?.user.id,
+          draftId,
+          resource,
+        ])?.status,
+      ).toBe("success");
+  });
 const settled = () =>
   waitFor(() =>
     expect(screen.getByRole("button", { name: "Discard draft" })).toBeEnabled(),
@@ -647,7 +672,10 @@ it.each(["re-entry", "account", "sign-out"])(
     }
     if (transition === "sign-out")
       await screen.findByRole("heading", { name: "Sign in required" });
-    else await ready();
+    else {
+      await ready();
+      await restoredReads(client);
+    }
     vi.mocked(fetch).mockClear();
     await act(() => required(finish)(Response.json({}, { status: 403 })));
     await waitFor(() => expect(client.isMutating()).toBe(0));
@@ -2227,11 +2255,15 @@ it("rejects forged and stale A2UI actions before any draft request", async () =>
     ),
   );
 });
-it("recovers a failed new conversation request by reloading the list, including failed recovery", async () => {
+it("keeps failed creation unresolved through successful and failed list reviews", async () => {
   drafts = [];
   let failList = false;
+  let creations = 0;
   override = (url, init) => {
-    if (init?.method === "POST") return Promise.reject("Lost response");
+    if (init?.method === "POST") {
+      creations++;
+      return Promise.reject("Lost response");
+    }
     if (failList && url.pathname === "/admin/product-drafts")
       return Response.json({ error: "Offline" }, { status: 503 });
   };
@@ -2241,14 +2273,17 @@ it("recovers a failed new conversation request by reloading the list, including 
   );
   click("+ New product");
   await screen.findByText(
-    /Draft request failed. Saved state has been reloaded/,
+    /Draft request failed. The creation outcome is unresolved/,
   );
+  expect(screen.getByRole("button", { name: "+ New product" })).toBeDisabled();
   failList = true;
-  click("+ New product");
-  await screen.findByText(/saved outcome is unresolved/);
+  click("Reload saved state");
+  await screen.findByText(/Offline The creation outcome is unresolved/);
   failList = false;
   click("Reload saved state");
-  await screen.findByText("Saved state reloaded. Review before continuing.");
+  await screen.findByText(/Saved conversations have been reloaded/);
+  expect(screen.getByRole("button", { name: "+ New product" })).toBeDisabled();
+  expect(creations).toBe(1);
 });
 
 it("keeps active cleanup distinct from discard when a save and authoritative read fail", async () => {
@@ -2518,7 +2553,7 @@ it("renders one prepared card with direct category confirmation and authoritativ
     1,
   );
   expect(
-    within(card).getByRole("button", { name: "Create product — unavailable" }),
+    within(card).getByRole("button", { name: "Create product" }),
   ).toBeDisabled();
   expect(card).toHaveTextContent("Online markup: 50%");
   expect(card).toHaveTextContent("In-person price: 2.50");
@@ -2630,9 +2665,7 @@ it("replaces a complete instruction with compact review, retaining direct answer
   expect(
     screen.getByRole("region", { name: "Product Card" }),
   ).toHaveTextContent("Known description");
-  expect(
-    screen.getByRole("button", { name: "Create product — unavailable" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Create product" })).toBeDisabled();
   expect(screen.getByLabelText("Product notes")).toHaveValue("");
 });
 
@@ -2880,4 +2913,111 @@ it("does not replace a newer authoritative read with an older delayed save respo
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
     "Newest external revision",
   );
+});
+
+it.each(
+  ["sign-out", "account", "session", "re-entry", "denial"].flatMap(
+    (transition) =>
+      [200, 403, 503].map((status) => [transition, status] as const),
+  ),
+)(
+  "stops dirty-save continuation after %s with a late %s response",
+  async (transition, status) => {
+    const client = testClient();
+    let view = renderWithClient(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+      client,
+    );
+    await ready();
+    let finish: ((response: Response) => void) | undefined;
+    override = (url, init) =>
+      url.pathname.endsWith("/prepare") && init?.method === "POST"
+        ? new Promise<Response>((resolve) => {
+            finish = resolve;
+          })
+        : undefined;
+    click("Edit draft facts");
+    fireEvent.change(screen.getByLabelText("Product name"), {
+      target: { value: "Owned by the earlier visit" },
+    });
+    click("+ New product");
+    await waitFor(() => expect(finish).toBeDefined());
+    override = undefined;
+    if (transition === "denial") {
+      override = (url, init) =>
+        url.pathname === "/admin/product-drafts" && init?.method === "GET"
+          ? Response.json({}, { status: 403 })
+          : undefined;
+      await act(() =>
+        client.refetchQueries({ queryKey: ["admin-draft-access"] }),
+      );
+      await screen.findByText(/Administrator access is required/);
+    } else if (transition === "re-entry") {
+      view.unmount();
+      view = renderWithClient(
+        <StrictMode>
+          <App />
+        </StrictMode>,
+        client,
+      );
+      await ready();
+    } else {
+      session.data =
+        transition === "account"
+          ? { user: { id: "bob" } }
+          : transition === "session"
+            ? { user: { id: "admin" }, session: { id: "replacement-session" } }
+            : null;
+      view.rerender(
+        <StrictMode>
+          <App />
+        </StrictMode>,
+      );
+      if (transition === "account" || transition === "session") await ready();
+      else await screen.findByRole("heading", { name: "Sign in required" });
+    }
+    if (session.data && transition !== "denial") await restoredReads(client);
+    requests = [];
+    await act(() =>
+      required(finish)(
+        Response.json(
+          status === 200
+            ? draft({ revision: 4 })
+            : { error: "Old visit response" },
+          { status },
+        ),
+      ),
+    );
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+    expect(requests).toEqual([]);
+    if (
+      transition === "account" ||
+      transition === "session" ||
+      transition === "re-entry"
+    )
+      expect(screen.getByRole("navigation")).toBeVisible();
+  },
+);
+
+it("recovers an active visit's aborted save instead of treating it as owner loss", async () => {
+  renderWithClient(<App />);
+  await ready();
+  override = (url) =>
+    url.pathname.endsWith("/prepare")
+      ? Promise.reject(new DOMException("Network interrupted", "AbortError"))
+      : undefined;
+  click("Edit draft facts");
+  fireEvent.change(screen.getByLabelText("Product name"), {
+    target: { value: "Retained after network interruption" },
+  });
+  click("Save draft answers");
+  await screen.findByText(/Saved state has been reloaded/);
+  expect(screen.getByLabelText("Product name")).toHaveValue(
+    "Retained after network interruption",
+  );
+  expect(
+    screen.getByRole("button", { name: "Save draft answers" }),
+  ).toBeEnabled();
 });
