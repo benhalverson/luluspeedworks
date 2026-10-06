@@ -217,7 +217,7 @@ test("storefront account and bag remain dialogs and share admin branding", async
   await checkLayout(page);
 });
 
-test("keyboard category entry and complete instructions keep one preparation-only card", async ({
+test("keyboard category entry and complete instructions keep one review card without submission authority", async ({
   page,
   api,
 }) => {
@@ -263,7 +263,7 @@ test("keyboard category entry and complete instructions keep one preparation-onl
   const card = page.getByRole("region", { name: "Product Card" });
   await expect(card).toHaveCount(1);
   await expect(
-    card.getByRole("button", { name: "Create product — unavailable" }),
+    card.getByRole("button", { name: "Create product", exact: true }),
   ).toBeDisabled();
   await expect(page.getByLabel("Product name", { exact: true })).toHaveCount(0);
   await expect(card).toContainText("Online markup: 50%");
