@@ -10,7 +10,7 @@ import {
 } from "react";
 import { matchPath, Route, Routes, useLocation } from "react-router";
 import { AdminWorkspace } from "./admin/workspace";
-import { authClient, returnDestination } from "./storefront/auth";
+import { accountRoute, authClient, returnDestination } from "./storefront/auth";
 import { cartActionSchema, useCart } from "./storefront/cart";
 import { useCartSessionRecovery } from "./storefront/cart-session";
 import { cartView } from "./storefront/cart-view";
@@ -62,14 +62,15 @@ function Storefront() {
     import.meta.env.VITE_API_ORIGIN || "https://api.luluspeedworks.com";
   const { snapshot, status, failed, retry } = useCatalog(origin);
   const { pathname, search } = useLocation();
-  const benchPath = ["/signin", "/signup", "/profile"].includes(pathname)
+  const benchPath = accountRoute(pathname)
     ? returnDestination(new URLSearchParams(search).get("returnTo"))
     : pathname;
   const productId = matchPath("/products/:productId", benchPath)?.params
     .productId;
-  const id = ["/", "/signin", "/signup", "/profile"].includes(benchPath)
-    ? null
-    : parseProductId(productId);
+  const id =
+    benchPath === "/" || accountRoute(benchPath)
+      ? null
+      : parseProductId(productId);
   const previousPath = useRef(pathname);
   const selected = useProduct(origin, id);
   const session = authClient.useSession();

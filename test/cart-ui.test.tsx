@@ -509,3 +509,43 @@ it("rejects forged cart and stale product actions, including actions delivered w
       .mock.calls.some(([url]) => String(url).includes("/cart/add")),
   ).toBe(false);
 });
+
+it.each([
+  "/signin",
+  "/signin/",
+  "/signup",
+  "/signup/",
+  "/profile",
+  "/profile/",
+])("opens account route %s without treating it as a product", async (path) => {
+  if (path.startsWith("/profile"))
+    session.data = { user: { id: "alice", email: "alice@example.com" } };
+  window.history.replaceState(null, "", path);
+  renderWithClient(<App />);
+  await screen.findByRole("dialog", { name: "Your account" });
+  if (path.startsWith("/profile"))
+    await screen.findByRole("form", { name: "Shipping profile" });
+  else
+    expect(
+      screen.getByRole("button", {
+        name: path.startsWith("/signup")
+          ? "Create account"
+          : "Sign in with password",
+      }),
+    ).toBeEnabled();
+  expect(screen.queryByText("Product not found")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(location.pathname).toBe("/"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("keeps an account return destination valid and closes a self-returning profile dialog", async () => {
+  session.data = { user: { id: "alice", email: "alice@example.com" } };
+  window.history.replaceState(null, "", "/profile/?returnTo=%2Fprofile%2F");
+  renderWithClient(<App />);
+  await screen.findByRole("form", { name: "Shipping profile" });
+  expect(screen.queryByText("Product not found")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(location.pathname).toBe("/"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
