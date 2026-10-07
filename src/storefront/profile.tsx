@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -103,20 +103,26 @@ function ProfileForm({
   profile,
   onSaved,
   onReady,
+  refreshing,
 }: {
   profile: Profile;
+  refreshing: boolean;
   onSaved?: () => void;
   onReady?: (ready: boolean) => void;
 }) {
   const {
     register,
+    control,
     handleSubmit,
     reset,
-    formState: { errors },
+    formState: { errors, dirtyFields },
   } = useForm<ProfileFields>({
     resolver: zodResolver(profileFields),
-    defaultValues: profile,
+    values: profile,
+    resetOptions: { keepDirtyValues: true },
   });
+  const values = useWatch({ control });
+  const client = useQueryClient();
   const active = useRef(true);
   useEffect(() => {
     active.current = true;
@@ -130,8 +136,13 @@ function ProfileForm({
     onError: () => {
       if (active.current) onReady?.(false);
     },
-    onSuccess: (value) => {
+    onSuccess: async (value) => {
       if (!active.current) return;
+      await client.cancelQueries({
+        queryKey: ["profile", apiOrigin, profile.id],
+      });
+      if (!active.current) return;
+      client.setQueryData(["profile", apiOrigin, profile.id], value);
       reset(value);
       onSaved?.();
       onReady?.(true);
@@ -161,11 +172,18 @@ function ProfileForm({
           <p id={`profile-${field.name}-error`} role="alert">
             {errors[field.name]?.message}
           </p>
+          {dirtyFields[field.name] &&
+          values[field.name] !== profile[field.name] ? (
+            <p className="text-sm text-muted-foreground">
+              Saved {field.label.toLowerCase()}: {profile[field.name]}. Your
+              edit is kept when you save.
+            </p>
+          ) : null}
         </div>
       ))}
       <Button
         className="col-span-full mt-2"
-        disabled={save.isPending}
+        disabled={save.isPending || refreshing}
         type="submit"
       >
         Save profile
@@ -214,6 +232,7 @@ export function ProfilePanel({
     <ProfileForm
       key={userId}
       profile={profile.data}
+      refreshing={profile.isFetching}
       onSaved={onSaved}
       onReady={onReady}
     />
