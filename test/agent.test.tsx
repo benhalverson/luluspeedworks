@@ -1214,3 +1214,42 @@ it.each(["interrupt", "cancel"] as const)(
     agent.dispose();
   },
 );
+
+it.each([
+  ["budget_exhausted", "monthly limit"],
+  ["accounting_unavailable", "temporarily unavailable"],
+  ["rate_limited", "Please wait"],
+  ["cancelled", "Shopping guidance is unavailable"],
+])(
+  "preserves %s when recovering terminal metadata without another inference run",
+  async (reason, message) => {
+    const payloads: (typeof expected)[] = [];
+    shoppingFetch((body) => {
+      payloads.push(body);
+      if (payloads.length === 1)
+        return Promise.reject(new Error("lost response"));
+      return Response.json({
+        runId: body.runId,
+        uiRevision: body.uiRevision,
+        status: "fallback",
+        reason,
+      });
+    });
+    const view = vi.fn();
+    const apply = vi.fn();
+    const agent = createShoppingAgent(testClient(), "http://localhost:8787", {
+      view,
+      apply,
+    });
+    await agent.send("Find pit tools");
+    await agent.send("Find something else");
+    expect(payloads).toHaveLength(2);
+    expect(payloads[1]).toEqual(payloads[0]);
+    expect(view).toHaveBeenLastCalledWith({
+      busy: false,
+      status: expect.stringContaining(message),
+    });
+    expect(apply).not.toHaveBeenCalled();
+    agent.dispose();
+  },
+);
