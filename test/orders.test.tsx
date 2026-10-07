@@ -18,12 +18,16 @@ it("reads authenticated history, paginates using the server count and opens perm
   vi.mocked(fetch).mockImplementation(async (url, init) => {
     expect(init?.credentials).toBe("include");
     expect(init?.cache).toBe("no-store");
+    expect(new Headers(init?.headers).get("X-Expected-Account-Id")).toBe(
+      "alice",
+    );
     const request = new URL(String(url));
     if (request.pathname === "/orders/1") return Response.json(order);
     expect(request.searchParams.get("limit")).toBe("10");
     expect(request.searchParams.get("direction")).toBe("desc");
     const offset = Number(request.searchParams.get("offset"));
     return Response.json({
+      accountId: "alice",
       orders:
         offset === 0 ? ten : [{ ...order, id: 11, orderNumber: "LULU-11" }],
       pagination: { offset, limit: 10, count: 11 },
@@ -68,6 +72,7 @@ it.each(["-1", "bad", "999999999999999999999"])(
 it("shows an empty page and never fabricates order data", async () => {
   vi.mocked(fetch).mockResolvedValue(
     Response.json({
+      accountId: "alice",
       orders: [],
       pagination: { limit: 10, offset: 0, count: 0 },
     }),
@@ -77,7 +82,7 @@ it("shows an empty page and never fabricates order data", async () => {
   expect(screen.getByRole("button", { name: "Next orders" })).toBeDisabled();
 });
 
-it.each([401, 403, 404, 503])(
+it.each([401, 403, 409, 404, 503])(
   "hides private content on HTTP %s and permits retry",
   async (status) => {
     vi.mocked(fetch).mockResolvedValueOnce(
@@ -230,4 +235,35 @@ it("does not treat an unknown fulfillment state or unpaid failure as success", a
   await screen.findByText("Payment: pending");
   expect(screen.getByText("Fulfillment: Status unavailable")).toBeVisible();
   expect(screen.queryByText(/Payment received/)).toBeNull();
+});
+
+it.each([
+  { ...orderPage, accountId: "bob" },
+  {
+    ...orderPage,
+    accountId: "bob",
+    orders: [],
+    pagination: { limit: 10, offset: 0, count: 0 },
+  },
+  { ...orderPage, accountId: undefined },
+  { ...orderPage, orders: [{ ...order, accountId: "bob" }] },
+])(
+  "rejects wrong or missing account binding without exposing records: %j",
+  async (body) => {
+    vi.mocked(fetch).mockResolvedValue(Response.json(body));
+    renderWithClient(<OrdersPanel userId="alice" />);
+    await screen.findByRole("alert");
+    expect(screen.queryByText("No orders on this page.")).toBeNull();
+    expect(screen.queryByText("$32.99")).toBeNull();
+  },
+);
+
+it("rejects a matching order ID belonging to a different account", async () => {
+  window.history.replaceState(null, "", "/orders/1");
+  vi.mocked(fetch).mockResolvedValue(
+    Response.json({ ...order, accountId: "bob" }),
+  );
+  renderWithClient(<OrdersPanel userId="alice" />);
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("heading", { name: "Order LULU-001" })).toBeNull();
 });
