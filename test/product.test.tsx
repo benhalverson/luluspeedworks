@@ -11,6 +11,21 @@ import {
 import { apiPage, categories, product } from "./catalog-fixtures";
 import { renderWithClient as render } from "./query-client";
 
+// Product tests have a deterministic guest session; auth lifecycles are tested separately.
+const guestSession = vi.hoisted(() => ({
+  data: null,
+  isPending: false,
+  error: null,
+  refetch: vi.fn(),
+}));
+vi.mock("../src/storefront/auth", async (original) => {
+  const actual = await original<typeof import("../src/storefront/auth")>();
+  return {
+    ...actual,
+    authClient: { ...actual.authClient, useSession: () => guestSession },
+  };
+});
+
 const red = {
   publicId: "76fe1f79-3f1e-43e4-b8f4-61159de5b93c",
   name: "PLA red",

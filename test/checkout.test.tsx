@@ -465,3 +465,47 @@ it("keeps a pending Square submission with its original account across sign-out 
   });
   expect(posts).toBe(1);
 });
+
+it.each(["valid", "stale", "expired"])(
+  "reads an agent-provided quote through deterministic review without posting checkout (%s)",
+  async (status) => {
+    window.history.replaceState(
+      null,
+      "",
+      `/checkout?quoteId=${quoteId}&cartId=${cartId}`,
+    );
+    quoteBody = { ...quoteBody, status };
+    renderWithClient(<CheckoutPage />);
+    if (status === "valid") await screen.findByText("Total (USD)");
+    else await screen.findByText(/review is no longer valid/);
+    const requests = vi.mocked(fetch).mock.calls;
+    expect(
+      requests.some(
+        ([url, init]) =>
+          String(url).endsWith(`/quotes/${quoteId}`) && init?.method === "GET",
+      ),
+    ).toBe(true);
+    expect(requests.some(([, init]) => init?.method === "POST")).toBe(false);
+    expect(
+      screen.queryByRole("button", { name: /Continue to Square.*\$3.59/ }) !==
+        null,
+    ).toBe(status === "valid");
+  },
+);
+it.each(["wrong-cart", "invalid-id"])(
+  "ignores an untrusted agent review link with %s",
+  async (kind) => {
+    window.history.replaceState(
+      null,
+      "",
+      `/checkout?quoteId=${kind === "invalid-id" ? "forged" : quoteId}&cartId=${kind === "wrong-cart" ? quoteId : cartId}`,
+    );
+    renderWithClient(<CheckoutPage />);
+    await screen.findByRole("button", { name: "Request a fresh quote" });
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([url]) => String(url).includes("/quotes")),
+    ).toBe(false);
+  },
+);

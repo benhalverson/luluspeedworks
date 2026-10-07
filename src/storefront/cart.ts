@@ -58,6 +58,7 @@ const savedCartSchema = z
 type SavedCart = z.infer<typeof savedCartSchema>;
 type CartOperation =
   | CartAction
+  | { kind: "initialize" }
   | { kind: "acknowledge" }
   | { kind: "claim"; userId: string };
 export type CartAction = z.infer<typeof cartActionSchema>;
@@ -326,13 +327,14 @@ export function useCart(
           });
           return checked;
         }
-        let action = cartActionSchema.parse(input);
+        let action =
+          input.kind === "initialize" ? input : cartActionSchema.parse(input);
         if (current?.pending)
           throw new Error(
             "A previous change has an unknown outcome. Refresh and check your bag before continuing.",
           );
         if (!current) {
-          if (action.kind !== "add")
+          if (action.kind !== "add" && action.kind !== "initialize")
             throw new Error(
               "This bag is no longer available. Refresh your bag.",
             );
@@ -361,6 +363,7 @@ export function useCart(
           };
           persist(current);
         }
+        if (action.kind === "initialize") return empty;
         const before = await request(
           origin,
           `/cart/${current.cartId}`,
@@ -463,5 +466,22 @@ export function useCart(
     cartId: saved?.cartId,
     revision: saved?.revision,
     claimable: Boolean(saved?.guestToken && identity !== null),
+    /** Return only this hook's current verified capability for trusted agent transport. */
+    agentAccess() {
+      if (!owner.current.ready || owner.current.identity !== identity)
+        throw Error("Shopping account changed");
+      const current = readSaved();
+      if (
+        !current ||
+        current.pending ||
+        (identity !== null && current.guestToken)
+      )
+        throw Error("Confirm your bag before shopping guidance");
+      return {
+        accountId: identity,
+        cartId: current.cartId,
+        ...(current.guestToken ? { guestToken: current.guestToken } : {}),
+      };
+    },
   };
 }

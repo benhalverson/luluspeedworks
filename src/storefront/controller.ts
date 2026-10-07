@@ -5,6 +5,7 @@ import {
 } from "@a2ui/web_core/v0_9";
 import type { QueryClient } from "@tanstack/react-query";
 import { createShoppingAgent } from "./agent";
+import type { AgentCommerce } from "./agent-commerce";
 import { requestSchema } from "./agent-contract";
 import type { CatalogSnapshot } from "./api";
 import { componentCatalog } from "./catalog";
@@ -62,6 +63,7 @@ export function createCatalogController(
   client: QueryClient,
   onAction: (name: string, context: A2uiClientAction["context"]) => void,
   origin = "https://api.luluspeedworks.com",
+  commerce?: AgentCommerce,
 ) {
   const processor = new MessageProcessor(
     [componentCatalog],
@@ -79,8 +81,19 @@ export function createCatalogController(
   );
   processor.processMessages(structuredClone(initialMessages));
   let composed = false;
+  let disposed = false;
   let location = "";
+  let identity: string | null | undefined;
   const agent = createShoppingAgent(client, origin, {
+    commerce: commerce
+      ? {
+          ...commerce,
+          async apply(effects) {
+            await commerce.apply(effects);
+            if (!disposed) interact();
+          },
+        }
+      : undefined,
     /** Publish agent status without allowing model data to replace shell controls. */
     view(value) {
       processor.processMessages([
@@ -195,6 +208,12 @@ export function createCatalogController(
 
   return {
     surface: processor.model.getSurface(surfaceId),
+    identity(next: string | null | undefined) {
+      if (next === identity) return;
+      identity = next;
+      interact();
+      agent.reset();
+    },
     interact,
     /** Invalidate guidance on a route change; same-URL clicks use interact directly. */
     navigate(next: string) {
@@ -221,6 +240,7 @@ export function createCatalogController(
     publish,
     /** Release agent work and renderer subscriptions owned by this mounted controller. */
     dispose() {
+      disposed = true;
       agent.dispose();
       processor.model.dispose();
     },
