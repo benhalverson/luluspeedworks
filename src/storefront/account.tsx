@@ -166,6 +166,9 @@ export function AccountPanel() {
           >
             Shipping profile
           </Link>
+          <Link className="underline" to="/orders">
+            Your orders
+          </Link>
           {bag.claimable ? (
             <Button
               disabled={pending}
