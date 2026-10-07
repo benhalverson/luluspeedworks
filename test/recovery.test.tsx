@@ -389,3 +389,156 @@ it("keeps successful reset confirmation when session refetch throws", async () =
   await screen.findByText(/password was changed, but/);
   expect(refetch).toHaveBeenCalledWith({ query: { disableCookieCache: true } });
 });
+
+it.each(["success", "failure", "offline"])(
+  "ignores a reset %s after entering a newer token visit",
+  async (outcome) => {
+    let finish!: (value: Response) => void;
+    let fail!: (error: Error) => void;
+    vi.mocked(fetch).mockImplementation(async (url) =>
+      String(url).includes("get-session")
+        ? Response.json(null)
+        : new Promise<Response>((resolve, reject) => {
+            finish = resolve;
+            fail = reject;
+          }),
+    );
+    const client = testClient();
+    const cancel = vi.spyOn(client, "cancelQueries");
+    const remove = vi.spyOn(client, "removeQueries");
+    visit("/reset-password?token=old", client);
+    passwords();
+    submit("Reset password");
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    act(() => {
+      window.history.pushState(
+        { key: "new-reset" },
+        "",
+        "/reset-password?token=new",
+      );
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    client.setQueryData(["new-visit"], "keep");
+    await screen.findByRole("button", { name: "Reset password" });
+    await act(async () => {
+      if (outcome === "offline") fail(Error("lost response"));
+      else
+        finish(
+          Response.json(
+            outcome === "success"
+              ? { status: true }
+              : { code: "INVALID_TOKEN" },
+            { status: outcome === "success" ? 200 : 400 },
+          ),
+        );
+    });
+    expect(location.search).toBe("?token=new");
+    expect(screen.getByLabelText("New password")).toHaveValue("");
+    expect(
+      screen.queryByText(
+        /password has been reset|could not confirm|has expired/,
+      ),
+    ).toBeNull();
+    expect(client.getQueryData(["new-visit"])).toBe("keep");
+    expect(cancel).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  },
+);
+
+it("does not clear new queries or navigate after leaving during cancellation", async () => {
+  mockApi();
+  let finish!: () => void;
+  const client = testClient();
+  vi.spyOn(client, "cancelQueries").mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const remove = vi.spyOn(client, "removeQueries");
+  visit("/reset-password?token=old", client);
+  passwords();
+  submit("Reset password");
+  await waitFor(() => expect(client.cancelQueries).toHaveBeenCalled());
+  fireEvent.click(screen.getByRole("link", { name: "Request another email" }));
+  await screen.findByLabelText("Email");
+  client.setQueryData(["new-visit"], "keep");
+  await act(async () => finish());
+  expect(location.pathname).toBe("/forgot-password");
+  expect(client.getQueryData(["new-visit"])).toBe("keep");
+  expect(remove).not.toHaveBeenCalled();
+});
+
+it("drops a reset continuation when the session generation changes", async () => {
+  vi.mocked(authClient.useSession).mockReturnValue({
+    data: null,
+    error: null,
+    isPending: false,
+    isRefetching: false,
+    refetch: vi.fn(),
+  });
+  let finish!: (value: Response) => void;
+  vi.mocked(fetch).mockImplementation(async (url) =>
+    String(url).includes("get-session")
+      ? Response.json(null)
+      : new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+  );
+  const client = testClient();
+  const cancel = vi.spyOn(client, "cancelQueries");
+  const view = visit("/reset-password?token=old", client);
+  passwords();
+  submit("Reset password");
+  await waitFor(() => expect(posts()).toHaveLength(1));
+  vi.mocked(authClient.useSession).mockReturnValue({
+    data: { user: { id: "new-user" }, session: { id: "new-session" } },
+    error: null,
+    isPending: false,
+    isRefetching: false,
+    refetch: vi.fn(),
+  } as unknown as ReturnType<typeof authClient.useSession>);
+  view.rerender(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+  await act(async () => finish(Response.json({ status: true })));
+  expect(location.search).toBe("?token=old");
+  expect(cancel).not.toHaveBeenCalled();
+});
+
+it("does not show an obsolete session-refresh failure after leaving reset success", async () => {
+  mockApi();
+  let fail!: (error: Error) => void;
+  const refetch = vi.fn(
+    () =>
+      new Promise<void>((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  vi.mocked(authClient.useSession).mockReturnValue({
+    data: null,
+    error: null,
+    isPending: false,
+    isRefetching: false,
+    refetch,
+  });
+  visit("/reset-password?token=old");
+  passwords();
+  submit("Reset password");
+  await screen.findByText(
+    "Your password has been reset. Sign in with your new password.",
+  );
+  act(() => {
+    window.history.pushState(
+      { key: "new-reset" },
+      "",
+      "/reset-password?token=new",
+    );
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await act(async () => fail(Error("offline")));
+  expect(location.search).toBe("?token=new");
+  expect(screen.queryByText(/could not refresh/)).toBeNull();
+});
