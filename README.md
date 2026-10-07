@@ -76,6 +76,7 @@ Logs are retained in `artifacts/smoke/server.log`; the HTML report is in `artifa
 | Product configuration | [product.ts](src/storefront/product.ts): numeric product IDs, SKU-backed bag requests and API color IDs |
 | Accounts and private bag state | [auth.ts](src/storefront/auth.ts), [account.tsx](src/storefront/account.tsx), [cart.ts](src/storefront/cart.ts), [profile.tsx](src/storefront/profile.tsx), [passkey.tsx](src/storefront/passkey.tsx) |
 | Password recovery | [recovery.tsx](src/storefront/recovery.tsx): standalone request/reset routes |
+| Customer orders | [orders.tsx](src/storefront/orders.tsx): verified account history, permanent detail routes and separate payment/fulfillment evidence |
 | Admin access and draft workflow | [workspace.tsx](src/admin/workspace.tsx): identity-scoped verification, separate draft caches, private callbacks and recovery |
 | Draft requests and attachments | [request.ts](src/admin/request.ts), [attachments.ts](src/admin/attachments.ts), [contracts.ts](src/admin/contracts.ts): protected API denial versus external transfer failure |
 | Conversation preparation | `POST /admin/product-drafts/:id/prepare` accepts revision-bound answers and an optional current message. Direct edits omit the message and bypass inference. Read/reload and completeness never execute operations. Exact category confirmation creates or reuses that category through the revision-checked API; the endpoint does not return a proposed online price. |
