@@ -8,6 +8,7 @@ import { apiOrigin, authClient } from "./auth";
 import { useCartSessionRecovery } from "./cart-session";
 
 const orderSchema = z.object({
+  accountId: z.string().min(1),
   id: z.number().int().positive(),
   orderNumber: z.string().min(1),
   createdAt: z.string().nullable(),
@@ -41,6 +42,7 @@ const orderSchema = z.object({
 type Order = z.infer<typeof orderSchema>;
 const limit = 10;
 const pageSchema = z.object({
+  accountId: z.string().min(1),
   orders: z.array(orderSchema).max(limit),
   pagination: z.object({
     limit: z.literal(limit),
@@ -165,6 +167,7 @@ export function OrdersPanel({ userId }: { userId: string }) {
         {
           baseURL: apiOrigin,
           credentials: "include",
+          headers: { "X-Expected-Account-Id": userId },
           cache: "no-store",
           jsonParser: JSON.parse,
           retry: 0,
@@ -172,9 +175,16 @@ export function OrdersPanel({ userId }: { userId: string }) {
         },
       );
       if (response.error) {
-        if ([401, 403].includes(response.error.status))
+        if ([401, 403, 409].includes(response.error.status))
           window.dispatchEvent(new Event(`lulu-cart-expired:${apiOrigin}`));
         throw new Error("Orders unavailable");
+      }
+      if (
+        !z.object({ accountId: z.literal(userId) }).safeParse(response.data)
+          .success
+      ) {
+        window.dispatchEvent(new Event(`lulu-cart-expired:${apiOrigin}`));
+        throw new Error("Order response belongs to another account");
       }
       return detail
         ? orderSchema
@@ -182,6 +192,9 @@ export function OrdersPanel({ userId }: { userId: string }) {
             .parse(response.data)
         : pageSchema
             .refine((page) => page.pagination.offset === offset)
+            .refine((page) =>
+              page.orders.every((order) => order.accountId === userId),
+            )
             .refine(
               (page) =>
                 page.orders.length ===

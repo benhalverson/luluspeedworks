@@ -1,4 +1,5 @@
 export const order = {
+  accountId: "alice",
   id: 1,
   orderNumber: "LULU-001",
   createdAt: "2026-09-21T00:00:00Z",
@@ -22,6 +23,7 @@ export const order = {
 };
 
 export const orderPage = {
+  accountId: "alice",
   orders: [order],
   pagination: { limit: 10, offset: 0, count: 1 },
 };
