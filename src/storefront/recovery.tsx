@@ -2,7 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -43,7 +43,14 @@ function recoveryError(
   return "Password recovery is temporarily unavailable. Please try again later.";
 }
 
+/** Each history entry owns its reset request; navigating never transfers a pending mutation. */
 export function RecoveryPage({ mode }: { mode: "request" | "reset" }) {
+  const location = useLocation();
+  return <RecoveryVisit key={location.key} mode={mode} />;
+}
+
+function RecoveryVisit({ mode }: { mode: "request" | "reset" }) {
+  const location = useLocation();
   const [params] = useSearchParams();
   const destination = returnDestination(params.get("returnTo"));
   const suffix = `?returnTo=${encodeURIComponent(destination)}`;
@@ -52,10 +59,37 @@ export function RecoveryPage({ mode }: { mode: "request" | "reset" }) {
   const navigate = useNavigate();
   const client = useQueryClient();
   const session = authClient.useSession();
-  const [complete, setComplete] = useState(false);
+  const [complete, setComplete] = useState(
+    mode === "reset" &&
+      !token &&
+      location.state?.passwordResetComplete === true,
+  );
   const [refreshFailed, setRefreshFailed] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const submitting = useRef(false);
+  const visit = useRef(0);
+  const identity = `${session.data?.user.id}:${session.data?.session.id}`;
+  const currentIdentity = useRef(identity);
+  if (currentIdentity.current !== identity) {
+    visit.current += 1;
+    currentIdentity.current = identity;
+  }
+  useEffect(() => {
+    visit.current += 1;
+    return () => {
+      visit.current += 1;
+    };
+  }, []);
+  useEffect(() => {
+    if (!complete || mode !== "reset") return;
+    let active = true;
+    void session.refetch({ query: { disableCookieCache: true } }).catch(() => {
+      if (active) setRefreshFailed(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [complete, mode, session.refetch]);
   const request = useForm<z.infer<typeof requestFields>>({
     resolver: zodResolver(requestFields),
     defaultValues: { email: "" },
@@ -73,6 +107,7 @@ export function RecoveryPage({ mode }: { mode: "request" | "reset" }) {
     retry: false,
     gcTime: 0,
     mutationFn: async () => {
+      const owner = visit.current;
       let result:
         | Awaited<ReturnType<typeof authClient.requestPasswordReset>>
         | Awaited<ReturnType<typeof authClient.resetPassword>>;
@@ -88,26 +123,29 @@ export function RecoveryPage({ mode }: { mode: "request" | "reset" }) {
                 newPassword: reset.getValues("password"),
               });
       } catch {
+        if (visit.current !== owner) return;
         throw new Error(
           mode === "request"
             ? "We could not confirm the request. An email may still arrive; check your inbox before trying again."
             : "We could not confirm the reset. Try signing in with your new password, or request another reset email.",
         );
       }
+      if (visit.current !== owner) return;
       if (result.error)
         throw new Error(recoveryError(result.error, mode === "reset"));
-      setComplete(true);
       if (mode === "reset") {
-        reset.reset();
-        await navigate(`/reset-password${suffix}`, { replace: true });
         await client.cancelQueries();
+        if (visit.current !== owner) return;
         client.removeQueries();
-        try {
-          await session.refetch({ query: { disableCookieCache: true } });
-        } catch {
-          setRefreshFailed(true);
-        }
-      } else request.reset();
+        reset.reset();
+        await navigate(`/reset-password${suffix}`, {
+          replace: true,
+          state: { passwordResetComplete: true },
+        });
+      } else {
+        setComplete(true);
+        request.reset();
+      }
     },
     onSettled: () => {
       submitting.current = false;
