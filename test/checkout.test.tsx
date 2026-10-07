@@ -138,7 +138,9 @@ it("reviews confirmed lines and separate server shipping using empty-body quote 
   expect(screen.getByText("$1.13")).toBeVisible();
   expect(screen.getByText(/Bracket · 2 ×/)).toHaveTextContent("Black · PLA");
   expect(screen.getByText(/Ship to:/)).toHaveTextContent(profile.address);
-  expect(screen.getByText(/Payment is not available yet/)).toBeVisible();
+  expect(
+    screen.getByText(/Continue to Square to enter payment details/),
+  ).toBeVisible();
   const call = vi
     .mocked(fetch)
     .mock.calls.find(
@@ -393,3 +395,73 @@ it.each([200, 403])(
     ).toBeDisabled();
   },
 );
+
+it("keeps a pending Square submission with its original account across sign-out and route re-entry", async () => {
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: { request: async (_key: string, run: () => Promise<void>) => run() },
+  });
+  let complete!: (value: Response) => void;
+  const delayed = new Promise<Response>((resolve) => {
+    complete = resolve;
+  });
+  let posts = 0;
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith("/checkout")) {
+      posts++;
+      return delayed;
+    }
+    if (path.startsWith("/checkout-attempts/"))
+      return Response.json({
+        attemptId: quoteId,
+        quoteId: quoteBody.id,
+        cartId,
+        state: "pending",
+        paymentUrl: "https://square.link/u/fixture",
+        order: null,
+      });
+    return respond(url, init);
+  });
+  const view = renderWithClient(
+    <StrictMode>
+      <CheckoutPage />
+    </StrictMode>,
+  );
+  await review();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Continue to Square — $3.59 USD" }),
+  );
+  await screen.findByText(/Contacting Square checkout/);
+  const attemptKey = "lulu-checkout-v1:https://api.luluspeedworks.com:alice";
+  const savedAttempt = localStorage.getItem(attemptKey);
+  expect(JSON.parse(savedAttempt ?? "null")).toMatchObject({
+    cartId,
+    quoteId: quoteBody.id,
+  });
+  session.data = null;
+  view.rerender(<CheckoutPage />);
+  await screen.findByRole("link", { name: "Sign in to review your checkout" });
+  await act(async () =>
+    complete(
+      Response.json({
+        attemptId: quoteId,
+        quoteId: quoteBody.id,
+        state: "initiating",
+        paymentUrl: "https://square.link/u/fixture",
+        squareOrderId: "square-order",
+      }),
+    ),
+  );
+  expect(screen.queryByRole("region", { name: "Payment outcome" })).toBeNull();
+  expect(localStorage.getItem(attemptKey)).toBe(savedAttempt);
+  session.data = { user: { id: "bob" } };
+  view.rerender(<CheckoutPage />);
+  expect(screen.queryByRole("region", { name: "Payment outcome" })).toBeNull();
+  session.data = { user: { id: "alice" } };
+  view.rerender(<CheckoutPage />);
+  await screen.findByRole("link", {
+    name: "Continue this checkout with Square",
+  });
+  expect(posts).toBe(1);
+});

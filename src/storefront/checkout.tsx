@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { apiOrigin, authClient } from "./auth";
 import { useCart } from "./cart";
 import { useCartSessionRecovery } from "./cart-session";
+import { PaymentRecovery, useCheckoutPayment } from "./checkout-payment";
 import { ProfilePanel } from "./profile";
 
 const cents = z.number().int().safe().nonnegative();
@@ -85,9 +86,11 @@ export async function requestQuote(
 function QuoteReview({
   cartId,
   enabled,
+  payment,
 }: {
   cartId: string;
   enabled: boolean;
+  payment: ReturnType<typeof useCheckoutPayment>;
 }) {
   const create = useMutation({
     mutationFn: () => requestQuote(cartId),
@@ -186,9 +189,17 @@ function QuoteReview({
             Changes to your bag, address or catalog require a fresh review.
           </p>
           <p>
-            Payment is not available yet. This review does not place an order or
-            charge you.
+            Continue to Square to enter payment details and explicitly authorize
+            payment. Returning here does not confirm payment.
           </p>
+          <Button
+            disabled={payment.blocked}
+            onClick={() =>
+              payment.mutation.mutate({ kind: "confirm", quote: reviewed })
+            }
+          >
+            Continue to Square — {money.format(reviewed.totalCents / 100)} USD
+          </Button>
         </div>
       ) : null}
     </section>
@@ -198,6 +209,7 @@ function QuoteReview({
 /** Keeps saved-profile edits and quote requests within one verified account and cart visit. */
 function CustomerCheckout({ userId }: { userId: string }) {
   const bag = useCart(apiOrigin, userId);
+  const payment = useCheckoutPayment(userId);
   const [profileRevision, setProfileRevision] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
@@ -211,6 +223,7 @@ function CustomerCheckout({ userId }: { userId: string }) {
     bag.cart.data.items.length > 0;
   return (
     <>
+      <PaymentRecovery payment={payment} />
       <div
         onChangeCapture={() => {
           setDirty(true);
@@ -234,6 +247,7 @@ function CustomerCheckout({ userId }: { userId: string }) {
           key={`${bag.cartId}:${bag.revision}:${JSON.stringify(bag.cart.data)}:${profileRevision}`}
           cartId={bag.cartId}
           enabled={!dirty}
+          payment={payment}
         />
       ) : null}
     </>
