@@ -10,7 +10,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 import type { ProductDraft } from "../src/admin/contracts";
 import type { Action, Preparation } from "../src/admin/mutations";
-import { draft, draftId, otherId } from "./admin-fixtures";
+import { draft, draftId, otherId, photo } from "./admin-fixtures";
 import {
   mutationResult,
   operationId,
@@ -967,6 +967,13 @@ it.each(["create", "delete"] as const)(
         target: { kind: "existing", productId: 42 },
         context: { status: "unavailable", productId: 42 },
       });
+    saved.attachments.photos = [
+      photo({ imageUrl: "/catalog/assets/removed/image" }),
+    ];
+    saved.attachments.photoOrder = saved.attachments.photos.map(
+      (item) => item.id,
+    );
+    saved.attachments.primaryPhotoId = photo().id;
     prepared = preparation(action);
     const recent = draft({
       id: otherId,
@@ -1003,6 +1010,9 @@ it.each(["create", "delete"] as const)(
       action === "create" ? /Product created\./ : /Product deleted\./,
     );
     await waitFor(() => expect(submit(action)).toBeDisabled());
+    expect(
+      screen.getByRole("list", { name: "Draft attachments" }),
+    ).toBeEmptyDOMElement();
     expect(screen.getByLabelText("Correct a detail")).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Discard draft" }),

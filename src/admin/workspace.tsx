@@ -1257,42 +1257,53 @@ function Workspace({
                   : (answers[field] ?? ""),
             disabled,
           })),
-        attachments: [
-          ...draft.attachments.photoOrder.flatMap((photoId) =>
-            draft.attachments.photos.filter((photo) => photo.id === photoId),
-          ),
-          ...(draft.attachments.printFile ? [draft.attachments.printFile] : []),
-        ]
-          .map((item, index) => ({
-            id: item.id,
-            name: item.name,
-            image: item.imageUrl ? new URL(item.imageUrl, apiOrigin).href : "",
-            status: "Saved",
-            photo: item.kind === "photo",
-            primary: item.id === draft.attachments.primaryPhotoId,
-            first: index === 0,
-            last: index === draft.attachments.photos.length - 1,
-            busy: disabled,
-            reselect: false,
-            resolve: false,
-          }))
-          .concat(
-            draft.attachments.transfers
-              .filter((item) => item.status !== "saved")
-              .map((item) => ({
-                id: item.id,
-                name: item.name,
-                image: "",
-                status: `${item.status === "pending" ? "Incomplete transfer" : item.status}${item.error ? `: ${item.error}` : ""}. ${item.requiresReselection ? "Reselect this file to continue." : "Reload to resolve this transfer."}`,
-                photo: false,
-                primary: false,
-                first: true,
-                last: true,
-                busy: disabled,
-                reselect: item.kind === "print" || item.requiresReselection,
-                resolve: item.kind === "print" || !item.requiresReselection,
-              })),
-          ),
+        attachments:
+          completed || draft.context.status === "unavailable"
+            ? []
+            : [
+                ...draft.attachments.photoOrder.flatMap((photoId) =>
+                  draft.attachments.photos.filter(
+                    (photo) => photo.id === photoId,
+                  ),
+                ),
+                ...(draft.attachments.printFile
+                  ? [draft.attachments.printFile]
+                  : []),
+              ]
+                .map((item, index) => ({
+                  id: item.id,
+                  name: item.name,
+                  image: item.imageUrl
+                    ? new URL(item.imageUrl, apiOrigin).href
+                    : "",
+                  status: "Saved",
+                  photo: item.kind === "photo",
+                  primary: item.id === draft.attachments.primaryPhotoId,
+                  first: index === 0,
+                  last: index === draft.attachments.photos.length - 1,
+                  busy: disabled,
+                  reselect: false,
+                  resolve: false,
+                }))
+                .concat(
+                  draft.attachments.transfers
+                    .filter((item) => item.status !== "saved")
+                    .map((item) => ({
+                      id: item.id,
+                      name: item.name,
+                      image: "",
+                      status: `${item.status === "pending" ? "Incomplete transfer" : item.status}${item.error ? `: ${item.error}` : ""}. ${item.requiresReselection ? "Reselect this file to continue." : "Reload to resolve this transfer."}`,
+                      photo: false,
+                      primary: false,
+                      first: true,
+                      last: true,
+                      busy: disabled,
+                      reselect:
+                        item.kind === "print" || item.requiresReselection,
+                      resolve:
+                        item.kind === "print" || !item.requiresReselection,
+                    })),
+                ),
       }
     : undefined;
   const visibleProducts = catalog.snapshot?.products.filter((product) =>
