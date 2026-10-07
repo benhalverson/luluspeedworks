@@ -19,7 +19,17 @@ pnpm dev
 
 Use the Node and pnpm versions pinned in [package.json](package.json) and [.nvmrc](.nvmrc). The setup commands above are for a fresh human development environment; agents use the active shell executables as specified in [AGENTS.md](AGENTS.md). Development and `pnpm exec vite preview` use `http://localhost:3000` with strict ports. The API must allow that frontend origin.
 
-The public build-time `VITE_API_ORIGIN` defaults to the storefront’s same-site API hostname, `https://api.luluspeedworks.com`. For a separately running development API, run `VITE_API_ORIGIN=http://localhost:8787 pnpm dev`; that API must allow the frontend origin. This value is public and must contain no secrets. Public catalog reads omit credentials; auth, bag, profile and private draft requests include credentials. External presigned print uploads omit cookies. No proxy or backend is included. See the [source map](#source-map) for request contracts.
+For a separately running development API, create `.env.development.local` in the repository root:
+
+```dotenv
+VITE_API_ORIGIN=http://localhost:8788
+```
+
+Then run `pnpm dev`. Vite loads this Git-ignored file in development mode; an explicit shell `VITE_API_ORIGIN` takes precedence. Restart the development server after changing the file. The API must allow `http://localhost:3000`.
+
+Production builds and preview use production mode and do not load `.env.development.local`. The public build-time `VITE_API_ORIGIN` continues to default to the storefront’s same-site API hostname, `https://api.luluspeedworks.com`, unless explicitly configured for the build. Changing the local API origin does not move production drafts or other data into the local API.
+
+`VITE_API_ORIGIN` is public and must contain no secrets. Vite exposes variables prefixed with `VITE_` to the browser, so keep private variables outside that prefix. Public catalog reads omit credentials; auth, bag, profile and private draft requests include credentials. External presigned print uploads omit cookies. No proxy or backend is included. See the [source map](#source-map) for request contracts.
 
 Changing the API origin selects a separate origin-scoped browser cart and private cache; existing pointers for the previous origin remain stored and are not silently transferred. Existing sessions on another API hostname are not assumed to transfer.
 
