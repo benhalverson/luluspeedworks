@@ -39,6 +39,11 @@ export const cartActionSchema = z.discriminatedUnion("kind", [
     itemId: z.number().int().positive(),
     quantity,
   }),
+  z.object({
+    kind: z.literal("adjust"),
+    itemId: z.number().int().positive(),
+    delta: z.union([z.literal(-1), z.literal(1)]),
+  }),
   z.object({ kind: z.literal("remove"), itemId: z.number().int().positive() }),
 ]);
 const savedCartSchema = z
@@ -321,7 +326,7 @@ export function useCart(
           });
           return checked;
         }
-        const action = cartActionSchema.parse(input);
+        let action = cartActionSchema.parse(input);
         if (current?.pending)
           throw new Error(
             "A previous change has an unknown outcome. Refresh and check your bag before continuing.",
@@ -366,6 +371,24 @@ export function useCart(
           current.guestToken,
         );
         assertOwner();
+        if (action.kind === "adjust") {
+          const itemId = action.itemId;
+          const line = before.items.find((item) => item.id === itemId);
+          if (!line)
+            throw new Error(
+              "This line is no longer in your bag. Refresh your bag.",
+            );
+          const next = quantity.safeParse(line.quantity + action.delta);
+          if (!next.success)
+            throw new Error(
+              "A bag line must contain between 1 and 69 items. Refresh your bag.",
+            );
+          action = {
+            kind: "update",
+            itemId: action.itemId,
+            quantity: next.data,
+          };
+        }
         if (
           action.kind !== "add" &&
           !before.items.some((line) => line.id === action.itemId)
