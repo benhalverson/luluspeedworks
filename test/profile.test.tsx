@@ -1,7 +1,7 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { ProfilePanel } from "../src/storefront/profile";
-import { renderWithClient } from "./query-client";
+import { renderWithClient, testClient } from "./query-client";
 
 const profile = {
   id: "alice",
@@ -126,4 +126,133 @@ it("does not display an empty or malformed profile response", async () => {
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent("Profile unavailable"),
   );
+});
+
+for (const dirtyAddress of [false, true]) {
+  it(`reconciles a refreshed profile while preserving intentional edits (${dirtyAddress})`, async () => {
+    let saved = profile;
+    const writes: Record<string, string>[] = [];
+    vi.mocked(fetch).mockImplementation(async (_url, init) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        writes.push(body);
+        return Response.json({ id: profile.id, email: profile.email, ...body });
+      }
+      return Response.json(saved);
+    });
+    const client = testClient();
+    renderWithClient(<ProfilePanel userId="alice" />, client);
+    await screen.findByDisplayValue(profile.address);
+    if (dirtyAddress)
+      fireEvent.change(screen.getByLabelText("Street address"), {
+        target: { value: "300 My Edited Street" },
+      });
+    saved = { ...profile, address: "200 New Street" };
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["profile"] });
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Street address")).toHaveValue(
+        dirtyAddress ? "300 My Edited Street" : saved.address,
+      ),
+    );
+    if (dirtyAddress)
+      expect(
+        screen.getByText(/Saved street address: 200 New Street/),
+      ).toHaveTextContent("Your edit is kept when you save.");
+    fireEvent.change(screen.getByLabelText("Phone"), {
+      target: { value: "5035550101" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+    await screen.findByText("Profile saved.");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      shippingAddress: dirtyAddress ? "300 My Edited Street" : saved.address,
+      phone: "5035550101",
+    });
+    expect(
+      client.getQueryData([
+        "profile",
+        "https://api.luluspeedworks.com",
+        "alice",
+      ]),
+    ).toMatchObject(writes[0] ?? {});
+    expect(screen.queryByText(/Your edit is kept/)).toBeNull();
+  });
+}
+
+it("does not publish a save after leaving while query cancellation is pending", async () => {
+  const client = testClient();
+  let finish!: () => void;
+  vi.spyOn(client, "cancelQueries").mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const onSaved = vi.fn();
+  vi.mocked(fetch).mockImplementation(async (_url, init) =>
+    Response.json(
+      init?.method === "POST"
+        ? { ...profile, shippingAddress: "300 Saved Street" }
+        : profile,
+    ),
+  );
+  const view = renderWithClient(
+    <ProfilePanel userId="alice" onSaved={onSaved} />,
+    client,
+  );
+  await screen.findByLabelText("City");
+  fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+  await waitFor(() => expect(client.cancelQueries).toHaveBeenCalled());
+  view.unmount();
+  await act(async () => finish());
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(
+    client.getQueryData(["profile", "https://api.luluspeedworks.com", "alice"]),
+  ).not.toMatchObject({ shippingAddress: "300 Saved Street" });
+});
+
+it("a save cancels an older profile read so it cannot roll back the acknowledged snapshot", async () => {
+  const client = testClient();
+  let finish!: (response: Response) => void;
+  let finishSave!: (response: Response) => void;
+  let reads = 0;
+  vi.mocked(fetch).mockImplementation(async (_url, init) => {
+    if (init?.method === "POST")
+      return new Promise<Response>((resolve) => {
+        finishSave = resolve;
+      });
+    if (++reads > 1)
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    return Response.json(profile);
+  });
+  renderWithClient(<ProfilePanel userId="alice" />, client);
+  await screen.findByLabelText("City");
+  fireEvent.change(screen.getByLabelText("City"), {
+    target: { value: "Salem" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+  await waitFor(() => expect(finishSave).toBeTypeOf("function"));
+  act(() => {
+    void client.refetchQueries({ queryKey: ["profile"] });
+  });
+  await waitFor(() => expect(reads).toBe(2));
+  await act(async () =>
+    finishSave(
+      Response.json({
+        ...profile,
+        shippingAddress: profile.address,
+        city: "Salem",
+      }),
+    ),
+  );
+  await screen.findByText("Profile saved.");
+  await act(async () => finish(Response.json(profile)));
+  expect(screen.getByLabelText("City")).toHaveValue("Salem");
+  expect(
+    client.getQueryData(["profile", "https://api.luluspeedworks.com", "alice"]),
+  ).toMatchObject({ city: "Salem" });
 });
