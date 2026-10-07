@@ -60,7 +60,8 @@ it("rejects obsolete account responses after the next account's orders load", as
   vi.mocked(fetch).mockResolvedValue(
     Response.json({
       ...orderPage,
-      orders: [{ ...order, orderNumber: "BOB-002" }],
+      accountId: "bob",
+      orders: [{ ...order, accountId: "bob", orderNumber: "BOB-002" }],
     }),
   );
   view.rerender(<App />);
@@ -93,3 +94,52 @@ it("loads permanent order links and returns to authenticated history", async () 
   fireEvent.click(screen.getByRole("link", { name: "Back to orders" }));
   await screen.findByRole("link", { name: "Order LULU-001" });
 });
+
+it.each(["conflict", "wrong-owner"])(
+  "refreshes authentication on %s while keeping the initiating account's UI private",
+  async (kind) => {
+    let release!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const view = renderWithClient(<App />);
+    await screen.findByText("Loading your orders…");
+    expect(
+      new Headers(vi.mocked(fetch).mock.calls[0]?.[1]?.headers).get(
+        "X-Expected-Account-Id",
+      ),
+    ).toBe("alice");
+    // A different tab changed the server session while this view still knows Alice.
+    await act(async () =>
+      release(
+        kind === "conflict"
+          ? Response.json({ error: "account_changed" }, { status: 409 })
+          : Response.json({
+              ...orderPage,
+              accountId: "bob",
+              orders: [{ ...order, accountId: "bob" }],
+            }),
+      ),
+    );
+    await waitFor(() => expect(session.refetch).toHaveBeenCalled());
+    expect(screen.queryByText("$32.99")).toBeNull();
+    session.data = { user: { id: "bob" } };
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json({
+        accountId: "bob",
+        orders: [],
+        pagination: { offset: 0, limit: 10, count: 0 },
+      }),
+    );
+    view.rerender(<App />);
+    await screen.findByText("No orders on this page.");
+    expect(
+      new Headers(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.headers).get(
+        "X-Expected-Account-Id",
+      ),
+    ).toBe("bob");
+  },
+);
