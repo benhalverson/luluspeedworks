@@ -655,3 +655,115 @@ it("exposes agent access only for the current ready, confirmed bag owner", async
   hook.rerender({ identity: "alice", ready: false });
   expect(() => hook.result.current.agentAccess()).toThrow("account changed");
 });
+function holdLocks() {
+  const queued: (() => Promise<void>)[] = [];
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: (_name: string, callback: () => Promise<CartSnapshot>) =>
+        new Promise<CartSnapshot>((resolve, reject) => {
+          queued.push(async () => {
+            try {
+              resolve(await callback());
+            } catch (error) {
+              reject(error);
+            }
+          });
+        }),
+    },
+  });
+  return queued;
+}
+
+it.each([1, -1] as const)(
+  "rebases two queued relative %s actions against fresh locked state",
+  async (delta) => {
+    save();
+    server.items = [{ ...line, quantity: delta === 1 ? 1 : 3 }];
+    const first = mount();
+    const second = mount();
+    await waitFor(() =>
+      expect(
+        first.result.current.cart.isSuccess &&
+          second.result.current.cart.isSuccess,
+      ).toBe(true),
+    );
+    const queued = holdLocks();
+    act(() => {
+      first.result.current.mutation.mutate({
+        kind: "adjust",
+        itemId: line.id,
+        delta,
+      });
+      second.result.current.mutation.mutate({
+        kind: "adjust",
+        itemId: line.id,
+        delta,
+      });
+    });
+    await waitFor(() => expect(queued).toHaveLength(2));
+    await act(async () => {
+      await queued[0]?.();
+    });
+    await act(async () => {
+      await queued[1]?.();
+    });
+    await waitFor(() =>
+      expect(second.result.current.mutation.isSuccess).toBe(true),
+    );
+    expect(
+      requests
+        .filter((request) => request.path === "/cart/update")
+        .map((request) => request.body.quantity),
+    ).toEqual(delta === 1 ? [2, 3] : [2, 1]);
+    expect(server.items[0]?.quantity).toBe(delta === 1 ? 3 : 1);
+  },
+);
+
+it.each(["changed", "removed", "minimum", "maximum"])(
+  "rechecks a queued action after an intervening %s state",
+  async (scenario) => {
+    save();
+    server.items = [{ ...line, quantity: 2 }];
+    const view = mount();
+    await waitFor(() => expect(view.result.current.cart.isSuccess).toBe(true));
+    const queued = holdLocks();
+    act(() =>
+      view.result.current.mutation.mutate({
+        kind: "adjust",
+        itemId: line.id,
+        delta: scenario === "minimum" ? -1 : 1,
+      }),
+    );
+    await waitFor(() => expect(queued).toHaveLength(1));
+    server.items =
+      scenario === "removed"
+        ? []
+        : [
+            {
+              ...line,
+              quantity:
+                scenario === "minimum" ? 1 : scenario === "maximum" ? 69 : 10,
+            },
+          ];
+    await act(async () => {
+      await queued[0]?.();
+    });
+    if (scenario === "changed") {
+      await waitFor(() =>
+        expect(view.result.current.mutation.isSuccess).toBe(true),
+      );
+      expect(server.items[0]?.quantity).toBe(11);
+    } else {
+      await waitFor(() =>
+        expect(view.result.current.mutation.isError).toBe(true),
+      );
+      expect(requests.some((request) => request.path === "/cart/update")).toBe(
+        false,
+      );
+      expect(JSON.parse(localStorage.getItem(key) ?? "null").pending).toBe(
+        false,
+      );
+    }
+  },
+);

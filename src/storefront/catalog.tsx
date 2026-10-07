@@ -762,9 +762,9 @@ const CartLine = createComponentImplementation(
               event: {
                 name: "change-bag",
                 context: {
-                  kind: "update",
+                  kind: "adjust",
                   itemId: props.itemId,
-                  quantity: props.quantity - 1,
+                  delta: -1,
                 },
               },
             })
@@ -781,9 +781,9 @@ const CartLine = createComponentImplementation(
               event: {
                 name: "change-bag",
                 context: {
-                  kind: "update",
+                  kind: "adjust",
                   itemId: props.itemId,
-                  quantity: props.quantity + 1,
+                  delta: 1,
                 },
               },
             })

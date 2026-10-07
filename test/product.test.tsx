@@ -36,6 +36,7 @@ function respond(
 ) {
   vi.mocked(fetch).mockImplementation(async (input) => {
     const url = new URL(String(input));
+    if (url.pathname === "/api/auth/get-session") return Response.json(null);
     if (url.pathname === "/categories")
       return options.catalogPending
         ? new Promise(() => {})
@@ -350,13 +351,14 @@ it("cancels obsolete detail and ignores a late response even when fetch ignores 
 it("times out detail requests and offers retry", async () => {
   vi.useFakeTimers();
   window.history.replaceState(null, "", "/products/1");
-  vi.mocked(fetch).mockImplementation(
-    (_input, init) =>
-      new Promise((_resolve, reject) =>
-        init?.signal?.addEventListener("abort", () =>
-          reject(new DOMException("aborted", "AbortError")),
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input).includes("/api/auth/get-session")
+      ? Promise.resolve(Response.json(null))
+      : new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          ),
         ),
-      ),
   );
   const view = render(
     <StrictMode>
