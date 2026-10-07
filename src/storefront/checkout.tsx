@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { z } from "zod";
 import { BrandLink } from "../components/brand-link";
 import { Button } from "../components/ui/button";
@@ -87,8 +87,10 @@ function QuoteReview({
   cartId,
   enabled,
   payment,
+  initialQuoteId,
 }: {
   cartId: string;
+  initialQuoteId?: string;
   enabled: boolean;
   payment: ReturnType<typeof useCheckoutPayment>;
 }) {
@@ -96,17 +98,18 @@ function QuoteReview({
     mutationFn: () => requestQuote(cartId),
     retry: false,
   });
+  const quoteId = create.data?.id ?? initialQuoteId;
   const quote = useQuery({
-    queryKey: ["checkout-quote", cartId, create.data?.id],
-    queryFn: ({ signal }) => requestQuote(cartId, create.data?.id, signal),
-    enabled: enabled && create.isSuccess,
+    queryKey: ["checkout-quote", cartId, quoteId],
+    queryFn: ({ signal }) => requestQuote(cartId, quoteId, signal),
+    enabled: enabled && Boolean(quoteId),
     retry: false,
     staleTime: 0,
     gcTime: 0,
     refetchInterval: 30_000,
   });
   const [expired, setExpired] = useState(false);
-  const expiresAt = create.data?.expiresAt;
+  const expiresAt = quote.data?.expiresAt ?? create.data?.expiresAt;
   useEffect(() => {
     setExpired(false);
     if (expiresAt === undefined) return;
@@ -208,6 +211,8 @@ function QuoteReview({
 
 /** Keeps saved-profile edits and quote requests within one verified account and cart visit. */
 function CustomerCheckout({ userId }: { userId: string }) {
+  const [search] = useSearchParams();
+  const requestedQuote = z.string().uuid().safeParse(search.get("quoteId"));
   const bag = useCart(apiOrigin, userId);
   const payment = useCheckoutPayment(userId);
   const [profileRevision, setProfileRevision] = useState(0);
@@ -246,6 +251,11 @@ function CustomerCheckout({ userId }: { userId: string }) {
         <QuoteReview
           key={`${bag.cartId}:${bag.revision}:${JSON.stringify(bag.cart.data)}:${profileRevision}`}
           cartId={bag.cartId}
+          initialQuoteId={
+            requestedQuote.success && search.get("cartId") === bag.cartId
+              ? requestedQuote.data
+              : undefined
+          }
           enabled={!dirty}
           payment={payment}
         />

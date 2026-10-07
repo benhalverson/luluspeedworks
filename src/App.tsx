@@ -8,8 +8,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { matchPath, Route, Routes, useLocation } from "react-router";
+import {
+  matchPath,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router";
 import { AdminWorkspace } from "./admin/workspace";
+import type { AgentEffect } from "./storefront/agent-commerce";
 import { authClient, returnDestination } from "./storefront/auth";
 import { cartActionSchema, useCart } from "./storefront/cart";
 import { useCartSessionRecovery } from "./storefront/cart-session";
@@ -61,6 +68,7 @@ export function App() {
 /** Own catalog, commerce and agent controllers for this route-mounted storefront. */
 function Storefront() {
   const client = useQueryClient();
+  const navigate = useNavigate();
   const origin =
     import.meta.env.VITE_API_ORIGIN || "https://api.luluspeedworks.com";
   const { snapshot, status, failed, retry } = useCatalog(origin);
@@ -121,6 +129,74 @@ function Storefront() {
         quantityValid(config.quantity),
     ),
   );
+  const agentOwner = useEffectEvent(() =>
+    session.isPending || session.error
+      ? undefined
+      : (session.data?.user?.id ?? null),
+  );
+  const agentPrepare = useEffectEvent(async (signal: AbortSignal) => {
+    if (!bag.cartId) await bag.mutation.mutateAsync({ kind: "initialize" });
+    signal.throwIfAborted();
+    return {
+      ...bag.agentAccess(),
+      ...(typeof id === "number" && quantityValid(config.quantity)
+        ? {
+            selection: {
+              productId: id,
+              quantity: Number(config.quantity),
+              ...(availableColor
+                ? { filamentId: availableColor.publicId }
+                : {}),
+            },
+          }
+        : {}),
+    };
+  });
+  const agentRefresh = useEffectEvent(async () => {
+    await bag.cart.refetch();
+  });
+  const agentApply = useEffectEvent(async (effects: AgentEffect[]) => {
+    for (const effect of effects) {
+      if ("accountId" in effect) {
+        if (
+          effect.kind === "checkout_review" &&
+          effect.status === "review_required" &&
+          effect.review &&
+          effect.review.cartId === bag.cartId
+        ) {
+          navigate(
+            `/checkout?quoteId=${effect.review.quoteId}&cartId=${effect.review.cartId}`,
+          );
+        } else if (effect.kind === "owned_orders") {
+          const first = effect.orders.at(0);
+          navigate(
+            first && effect.orders.length === 1
+              ? `/orders/${first.id}`
+              : "/orders",
+          );
+        } else if (effect.kind === "checkout_attempt") navigate("/checkout");
+      } else if (effect.status === "selected") {
+        const chosen = effect.selection;
+        if (
+          chosen.productId !== id ||
+          !selected.product.data ||
+          chosen.material !== selected.product.data.filamentType ||
+          !verifiedColors?.data.some(
+            (color) => color.publicId === chosen.filamentId,
+          )
+        )
+          throw Error("Refresh product options before selecting");
+        setConfigurations((current) => ({
+          ...current,
+          [chosen.productId]: {
+            color: chosen.filamentId,
+            quantity: String(chosen.quantity),
+            unavailable: false,
+          },
+        }));
+      }
+    }
+  });
   const onAction = useEffectEvent(
     (name: string, context: A2uiClientAction["context"]) => {
       if (name === "refresh-bag") {
@@ -196,10 +272,23 @@ function Storefront() {
       client,
       (name, context) => onAction(name, context),
       origin,
+      {
+        owner: () => agentOwner(),
+        prepare: (signal) => agentPrepare(signal),
+        refresh: () => agentRefresh(),
+        apply: (effects) => agentApply(effects),
+      },
     );
     setController(current);
     return () => current.dispose();
   }, [client]);
+  useLayoutEffect(() => {
+    controller?.identity(
+      session.isPending || session.error
+        ? undefined
+        : (session.data?.user?.id ?? null),
+    );
+  }, [controller, session.data?.user?.id, session.isPending, session.error]);
   useLayoutEffect(() => {
     controller?.navigate(`${pathname}${search}`);
   }, [controller, pathname, search]);

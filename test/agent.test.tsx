@@ -7,7 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import { StrictMode } from "react";
-import { expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 import { createShoppingAgent } from "../src/storefront/agent";
 import { batchSchema } from "../src/storefront/agent-contract";
@@ -17,6 +17,18 @@ import { agentFixture } from "./agent-fixtures";
 import { mockCatalog } from "./catalog-fixtures";
 import { renderWithClient as render, testClient } from "./query-client";
 
+const cartId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const guestToken = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+beforeEach(() => {
+  localStorage.clear();
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (_key: string, work: () => Promise<unknown>) => work(),
+    },
+  });
+});
+afterEach(() => Reflect.deleteProperty(navigator, "locks"));
 const session = {
   sessionId: "73f4ebed-0967-4112-8484-ed0263749e61",
   capability: "private-visit-capability",
@@ -94,6 +106,18 @@ function shoppingFetch(
   if (!catalog) throw new Error("Missing catalog fixture");
   vi.mocked(fetch).mockImplementation((input, init) => {
     const path = new URL(String(input)).pathname;
+    if (path === "/api/auth/get-session")
+      return Promise.resolve(Response.json(null));
+    if (path === "/cart/create")
+      return Promise.resolve(
+        Response.json({ cartId, guestToken, ownerId: null }),
+      );
+    if (path === `/cart/${cartId}`)
+      return Promise.resolve(Response.json({ items: [], total: 0 }));
+    if (path.endsWith("/agent-state"))
+      return Promise.resolve(Response.json({ cartId, revision: 0, items: [] }));
+    if (path.includes("/agent-actions/"))
+      return Promise.resolve(Response.json({}, { status: 404 }));
     if (path === "/agent/sessions")
       return Promise.resolve(Response.json(session));
     if (path.endsWith("/cancel"))

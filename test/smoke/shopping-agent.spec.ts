@@ -10,6 +10,14 @@ for (const reason of [
     page,
     api,
   }) => {
+    const cartId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    api.responses.set("POST /cart/create", {
+      body: { cartId, ownerId: "admin" },
+    });
+    api.responses.set(`GET /cart/${cartId}`, { body: { items: [], total: 0 } });
+    api.responses.set(`GET /cart/${cartId}/agent-state`, {
+      body: { cartId, revision: 0, items: [] },
+    });
     const sessionId = "73f4ebed-0967-4112-8484-ed0263749e61";
     const requests: unknown[] = [];
     let fail = false;
@@ -118,9 +126,13 @@ for (const reason of [
     await page.keyboard.press("Escape");
     await checkLayout(page);
     expect(requests).toHaveLength(2);
-    expect(api.requests.some((key) => key.startsWith("POST /cart"))).toBe(
-      false,
-    );
+    expect(
+      api.requests.some((key) =>
+        /^(POST \/cart\/add|PUT \/cart\/update|DELETE \/cart\/remove)/.test(
+          key,
+        ),
+      ),
+    ).toBe(false);
   });
 }
 
@@ -128,6 +140,14 @@ test("lost requests recover the same run before allowing another request", async
   page,
   api,
 }) => {
+  const cartId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  api.responses.set("POST /cart/create", {
+    body: { cartId, ownerId: "admin" },
+  });
+  api.responses.set(`GET /cart/${cartId}`, { body: { items: [], total: 0 } });
+  api.responses.set(`GET /cart/${cartId}/agent-state`, {
+    body: { cartId, revision: 0, items: [] },
+  });
   const requests: { runId: string; message: string; uiRevision: number }[] = [];
   await page.route("https://api.lulu.test/agent/**", async (route) => {
     if (route.request().url().endsWith("/sessions"))
@@ -140,6 +160,10 @@ test("lost requests recover the same run before allowing another request", async
         },
       });
     const input = route.request().postDataJSON();
+    api.responses.set(
+      `GET /cart/${cartId}/agent-actions/73f4ebed-0967-4112-8484-ed0263749e61/${input.runId}`,
+      { status: 404, body: { error: "No confirmed cart action" } },
+    );
     requests.push(input);
     if (requests.length === 1) {
       api.expectedNetworkErrors.set(
@@ -163,6 +187,7 @@ test("lost requests recover the same run before allowing another request", async
   await input.fill("Find pit tools");
   await send.click();
   await expect(page.getByText(/check the previous request/)).toBeVisible();
+  await page.reload();
   await input.fill("Find a fan mount");
   await send.click();
   await expect(
@@ -178,5 +203,143 @@ test("lost requests recover the same run before allowing another request", async
   await expect.poll(() => requests.length).toBe(4);
   expect(requests[3]?.runId).not.toBe(requests[0]?.runId);
   expect(requests[3]?.message).toBe("Find a fan mount");
+  await checkLayout(page);
+});
+
+test("validated agent selections retain keyboard controls and checkout needs explicit review", async ({
+  page,
+  api,
+}) => {
+  const cartId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const filamentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const quoteId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const sessionId = "73f4ebed-0967-4112-8484-ed0263749e61";
+  api.responses.set("POST /cart/create", {
+    body: { cartId, ownerId: "admin" },
+  });
+  api.responses.set(`GET /cart/${cartId}`, { body: { items: [], total: 0 } });
+  api.responses.set(`GET /cart/${cartId}/agent-state`, {
+    body: { cartId, revision: 0, items: [] },
+  });
+  api.responses.set("GET /v2/colors", {
+    body: {
+      success: true,
+      data: [
+        {
+          publicId: filamentId,
+          name: "Red PLA",
+          color: "red",
+          profile: "PLA",
+          available: true,
+        },
+      ],
+    },
+  });
+  api.responses.set(`GET /shipping-quotes/${quoteId}`, {
+    status: 410,
+    body: { error: "Expired" },
+  });
+  let count = 0;
+  await page.route("https://api.lulu.test/agent/**", async (route) => {
+    if (route.request().url().endsWith("/sessions"))
+      return route.fulfill({
+        json: {
+          sessionId,
+          capability: "fixture",
+          expiresAt: 9e12,
+          absoluteExpiresAt: 9e12,
+        },
+      });
+    if (route.request().url().endsWith("/cancel"))
+      return route.fulfill({ json: {} });
+    const { runId, uiRevision } = route.request().postDataJSON();
+    count++;
+    const result =
+      count === 1
+        ? {
+            status: "selected",
+            selection: {
+              productId: 1,
+              quantity: 2,
+              filamentId,
+              material: "PLA",
+              color: "red",
+            },
+          }
+        : {
+            kind: "checkout_review",
+            accountId: "admin",
+            status: "review_required",
+            review: {
+              quoteId,
+              cartId,
+              currency: "USD",
+              subtotalCents: 458,
+              shippingCents: 100,
+              totalCents: 558,
+              expiresAt: 9e12,
+              confirmationRequired: true,
+            },
+          };
+    const batch = structuredClone(agentFixture);
+    for (const message of batch.messages)
+      for (const node of message.updateComponents.components) {
+        if ("image" in node) node.image = "";
+        if ("src" in node) node.src = "";
+      }
+    const frames = [
+      {
+        type: "RUN_STARTED",
+        threadId: sessionId,
+        runId,
+        metadata: { uiRevision },
+      },
+      {
+        type: "CUSTOM",
+        name: "lulu.progress.v1",
+        value: { runId, uiRevision, stage: "admission", invocation: 0 },
+      },
+      {
+        type: "CUSTOM",
+        name: count === 1 ? "lulu.cart.v1" : "lulu.commerce.v1",
+        value: { runId, uiRevision, result },
+      },
+      {
+        type: "CUSTOM",
+        name: "lulu.a2ui.v1",
+        value: { ...batch, runId, uiRevision },
+      },
+      {
+        type: "RUN_FINISHED",
+        threadId: sessionId,
+        runId,
+        result: { uiRevision, status: "completed" },
+      },
+    ];
+    await route.fulfill({
+      contentType: "text/event-stream",
+      body: frames
+        .map((frame) => `data: ${JSON.stringify(frame)}\n\n`)
+        .join(""),
+    });
+  });
+  await page.goto("/products/1");
+  await expect(page.getByLabel("Color")).toBeEnabled();
+  const input = page.getByRole("textbox", { name: "YOUR SHOPPING REQUEST" });
+  await input.fill("Choose two red");
+  await input.press("Enter");
+  await expect(page.getByLabel("Color")).toHaveValue(filamentId);
+  await expect(page.getByLabel("Quantity")).toHaveValue("2");
+  await page.getByLabel("Quantity").focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByLabel("Quantity")).toHaveValue("3");
+  await input.fill("Prepare checkout");
+  await input.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Shipping and checkout review" }),
+  ).toBeVisible();
+  expect(
+    api.requests.filter((request) => request.startsWith("POST /checkout")),
+  ).toEqual([]);
   await checkLayout(page);
 });

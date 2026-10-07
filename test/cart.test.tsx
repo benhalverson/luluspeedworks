@@ -636,3 +636,22 @@ it("does not continue queued mutations after their mounted visit ends", async ()
     await rejected;
   });
 });
+
+it("exposes agent access only for the current ready, confirmed bag owner", async () => {
+  const hook = mount();
+  expect(() => hook.result.current.agentAccess()).toThrow("Confirm");
+  save(true);
+  expect(() => hook.result.current.agentAccess()).toThrow("Confirm");
+  save();
+  expect(hook.result.current.agentAccess()).toMatchObject({
+    accountId: null,
+    cartId,
+    guestToken: cartId,
+  });
+  const stale = hook.result.current.agentAccess;
+  hook.rerender({ identity: "alice", ready: true });
+  expect(() => stale()).toThrow("account changed");
+  expect(() => hook.result.current.agentAccess()).toThrow("Confirm");
+  hook.rerender({ identity: "alice", ready: false });
+  expect(() => hook.result.current.agentAccess()).toThrow("account changed");
+});

@@ -1,0 +1,29 @@
+name: Companion agent consumers
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  consumers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: frontend
+      - uses: actions/checkout@v4
+        with:
+          repository: benhalverson/3dprinter-farm
+          ref: 50c472c588daa72785749be96468268c0ea3a563
+          path: api
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: corepack pnpm install --frozen-lockfile
+        working-directory: api
+      - run: node test/companion/agent-consumers.mjs
+        working-directory: frontend
+        env:
+          COMPANION_API_CHECKOUT: ${{ github.workspace }}/api

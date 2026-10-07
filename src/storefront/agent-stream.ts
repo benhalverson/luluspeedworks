@@ -1,4 +1,9 @@
 import {
+  type AgentEffect,
+  cartEventSchema,
+  commerceEventSchema,
+} from "./agent-commerce";
+import {
   type AgentBatch,
   batchSchema,
   eventSchema,
@@ -17,7 +22,7 @@ export async function readAgentStream(
   expected: { sessionId: string; runId: string; uiRevision: number },
   signal: AbortSignal,
   progress: () => void,
-): Promise<{ batch?: AgentBatch; reason?: string }> {
+): Promise<{ batch?: AgentBatch; reason?: string; effects?: AgentEffect[] }> {
   if (
     !response.headers.get("content-type")?.startsWith("text/event-stream") ||
     !response.body
@@ -37,6 +42,7 @@ export async function readAgentStream(
   let invocation = -1;
   let batch: AgentBatch | undefined;
   let reason: string | undefined;
+  const effects: AgentEffect[] = [];
   /** Reject data belonging to another run or a superseded UI revision. */
   const match = (value: { runId: string; uiRevision: number }) => {
     if (
@@ -87,7 +93,14 @@ export async function readAgentStream(
     } else {
       if (invocation === -1) throw new Error("Missing admission");
       if (batch || reason) throw new Error("Duplicate outcome");
-      if (event.name === "lulu.a2ui.v1") {
+      if (event.name === "lulu.cart.v1" || event.name === "lulu.commerce.v1") {
+        const value = (
+          event.name === "lulu.cart.v1" ? cartEventSchema : commerceEventSchema
+        ).parse(event.value);
+        match(value);
+        if (effects.length >= 8) throw Error("Too many shopping effects");
+        effects.push(value.result);
+      } else if (event.name === "lulu.a2ui.v1") {
         batch = batchSchema.parse(event.value);
         match(batch);
       } else if (event.name === "lulu.fallback.v1") {
@@ -122,5 +135,5 @@ export async function readAgentStream(
     await reader.cancel();
     reader.releaseLock();
   }
-  return { batch, reason };
+  return { batch, reason, ...(effects.length ? { effects } : {}) };
 }
