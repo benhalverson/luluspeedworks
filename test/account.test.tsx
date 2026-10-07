@@ -518,3 +518,53 @@ it("offers password authentication without RC-bound passkeys on Lulu", () => {
   expect(screen.queryByRole("button", { name: "Add a passkey" })).toBeNull();
   expect(screen.queryByText("Account security")).toBeNull();
 });
+
+it("keeps the guest capability and private cache when the actual SDK confirms another account", async () => {
+  window.history.replaceState(null, "", "/signin?returnTo=%2Fcheckout");
+  const key = "lulu-cart-v2:https://api.luluspeedworks.com";
+  const cartId = "8cfbf30a-2995-486e-a1e8-8f7d41488f1e";
+  const guest = JSON.stringify({
+    cartId,
+    guestToken: cartId,
+    ownerId: null,
+    pending: false,
+    revision: crypto.randomUUID(),
+  });
+  localStorage.setItem(key, guest);
+  const actual = await vi.importActual<typeof import("../src/storefront/auth")>(
+    "../src/storefront/auth",
+  );
+  vi.mocked(authenticate).mockImplementationOnce(actual.authenticate);
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith("sign-in/email"))
+      return Response.json({ user: { id: "alice" } });
+    if (path.endsWith("get-session"))
+      return Response.json({
+        user: { id: "bob" },
+        session: { id: "bob-session" },
+      });
+    return Response.json({ items: [], total: 0 });
+  });
+  const client = testClient();
+  client.setQueryData(["private-sentinel"], "retain");
+  const cancel = vi.spyOn(client, "cancelQueries");
+  const clear = vi.spyOn(client, "clear");
+  renderWithClient(<AccountPanel />, client);
+  await fill();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in with password" }),
+  );
+  await screen.findByText(
+    "Your account changed during sign-in. Please try again with the intended account.",
+  );
+  expect(session.data).toBeNull();
+  expect(cancel).not.toHaveBeenCalled();
+  expect(clear).not.toHaveBeenCalled();
+  expect(client.getQueryData(["private-sentinel"])).toBe("retain");
+  expect(localStorage.getItem(key)).toBe(guest);
+  expect(location.pathname).toBe("/signin");
+  expect(
+    vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/claim")),
+  ).toBe(false);
+});

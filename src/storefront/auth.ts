@@ -82,5 +82,17 @@ export async function authenticate(
         ? "Passkey sign-in was cancelled or unavailable. Try again or use your password."
         : "Sign-in failed. Check your details and try again.",
     );
-  return confirmSession();
+  const principal = z
+    .object({ user: z.object({ id: z.string().trim().min(1) }) })
+    .safeParse(result.data);
+  if (!principal.success)
+    throw new Error(
+      "Your sign-in identity could not be confirmed. Please try again.",
+    );
+  const confirmed = await confirmSession();
+  if (confirmed.id !== principal.data.user.id)
+    throw new Error(
+      "Your account changed during sign-in. Please try again with the intended account.",
+    );
+  return confirmed;
 }
