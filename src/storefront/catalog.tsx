@@ -9,16 +9,19 @@ import { Button } from "../components/ui/button";
 import { DialogContent } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { AccountPanel } from "./account";
-import { authClient, returnDestination } from "./auth";
+import { accountRoute, authClient, returnDestination } from "./auth";
 
 function AccountDialog() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  const destination = returnDestination(params.get("returnTo"));
   return (
     <Dialog.Root
-      open={["/signin", "/signup", "/profile"].includes(pathname)}
-      onOpenChange={() => navigate(returnDestination(params.get("returnTo")))}
+      open={Boolean(accountRoute(pathname))}
+      onOpenChange={() =>
+        navigate(accountRoute(destination) ? "/" : destination)
+      }
     >
       <DialogContent
         title="Your account"

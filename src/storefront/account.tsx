@@ -8,6 +8,7 @@ import { Input } from "../components/ui/input";
 import {
   type AccountFields,
   accountFields,
+  accountRoute,
   apiOrigin,
   authClient,
   authenticate,
@@ -75,9 +76,9 @@ export function AccountPanel() {
         );
     };
   }
-  const mode = location.pathname === "/signup" ? "signup" : "signin";
-  const showingForm =
-    location.pathname === "/signin" || location.pathname === "/signup";
+  const route = accountRoute(location.pathname);
+  const mode = route === "/signup" ? "signup" : "signin";
+  const showingForm = route === "/signin" || route === "/signup";
   const destination = returnDestination(params.get("returnTo"));
   const {
     register,
@@ -289,10 +290,7 @@ export function AccountPanel() {
           Session unavailable. You can keep browsing and retry signing in.
         </p>
       ) : null}
-      {user &&
-      !session.isPending &&
-      !session.error &&
-      location.pathname === "/profile" ? (
+      {user && !session.isPending && !session.error && route === "/profile" ? (
         <div key={user.id}>
           <ProfilePanel userId={user.id} />
           {passkeysSupported ? (

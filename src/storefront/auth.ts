@@ -1,5 +1,6 @@
 import { passkeyClient } from "@better-auth/passkey/client";
 import { createAuthClient } from "better-auth/react";
+import { matchPath } from "react-router";
 import { z } from "zod";
 
 export const apiOrigin =
@@ -24,6 +25,13 @@ export type AccountFields = z.infer<typeof accountFields>;
 export const signupFields = accountFields.extend({
   password: z.string().min(8, "Use at least 8 characters.").max(128),
 });
+
+/** Match account locations with the same case and trailing-slash rules as the router. */
+export function accountRoute(pathname: string) {
+  return (["/signin", "/signup", "/profile"] as const).find((path) =>
+    matchPath(path, pathname),
+  );
+}
 
 /** Permit only local, known storefront destinations after authentication. */
 export function returnDestination(value: string | null) {
