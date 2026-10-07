@@ -30,9 +30,18 @@ beforeEach(() => {
     data: { user: { id: "user-1", email: "ben@example.com" } },
     error: null,
   });
-  sdk.signIn.email.mockResolvedValue({ error: null });
-  sdk.signIn.passkey.mockResolvedValue({ error: null });
-  sdk.signUp.email.mockResolvedValue({ error: null });
+  sdk.signIn.email.mockResolvedValue({
+    data: { user: { id: "user-1" } },
+    error: null,
+  });
+  sdk.signIn.passkey.mockResolvedValue({
+    data: { user: { id: "user-1" } },
+    error: null,
+  });
+  sdk.signUp.email.mockResolvedValue({
+    data: { user: { id: "user-1" } },
+    error: null,
+  });
 });
 it("delegates password, signup and passkey flows and confirms the resulting session", async () => {
   await authenticate("signin", values);
@@ -107,3 +116,34 @@ it("allows only local known destinations and preserves legacy short signin passw
 it("defaults to the same-site Lulu API", () => {
   expect(apiOrigin).toBe("https://api.luluspeedworks.com");
 });
+
+for (const kind of ["signin", "signup", "passkey"] as const) {
+  it(`rejects ${kind} when the confirmed account differs from the authenticated principal`, async () => {
+    sdk.getSession.mockResolvedValue({
+      data: { user: { id: "other-user" } },
+      error: null,
+    });
+    await expect(authenticate(kind, values)).rejects.toThrow("account changed");
+  });
+  it.each([
+    undefined,
+    null,
+    {},
+    { user: {} },
+    { user: { id: "" } },
+    { user: { id: 12 } },
+  ])(`rejects ${kind} without a valid response identity: %j`, async (data) => {
+    const method =
+      kind === "signup"
+        ? sdk.signUp.email
+        : kind === "passkey"
+          ? sdk.signIn.passkey
+          : sdk.signIn.email;
+    method.mockResolvedValue({ data, error: null });
+    sdk.getSession.mockClear();
+    await expect(authenticate(kind, values)).rejects.toThrow(
+      "identity could not be confirmed",
+    );
+    expect(sdk.getSession).not.toHaveBeenCalled();
+  });
+}

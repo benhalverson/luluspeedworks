@@ -194,3 +194,51 @@ for (const outcome of ["failed", "wrong-owner"] as const) {
     await checkLayout(page);
   });
 }
+
+test("a competing session cannot claim the bag for another sign-in principal", async ({
+  page,
+  api,
+}) => {
+  api.responses.set("GET /api/auth/get-session", { body: null });
+  api.responses.set(`GET /cart/${cartId}`, { body: { items: [], total: 0 } });
+  await page.addInitScript(
+    ({ key, id }) => {
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          cartId: id,
+          guestToken: id,
+          ownerId: null,
+          pending: false,
+          revision: crypto.randomUUID(),
+        }),
+      );
+    },
+    { key: storageKey, id: cartId },
+  );
+  await page.goto("/signin?returnTo=%2Fcheckout");
+  await page.getByLabel("Email", { exact: true }).fill(user.email);
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("controlled smoke password");
+  api.responses.set("POST /api/auth/sign-in/email", {
+    body: { user: { ...user, id: "alice" }, token: "fixture", redirect: false },
+  });
+  api.responses.set("GET /api/auth/get-session", { body: verifiedSession });
+  await page.getByRole("button", { name: "Sign in with password" }).click();
+  await expect(
+    page.getByText(
+      "Your account changed during sign-in. Please try again with the intended account.",
+    ),
+  ).toBeVisible();
+  expect(api.requests.some((key) => key.endsWith("/claim"))).toBe(false);
+  await expect(page).toHaveURL(/\/signin\?returnTo=%2Fcheckout$/);
+  expect(
+    await page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key) ?? "null"),
+      storageKey,
+    ),
+  ).toMatchObject({ cartId, guestToken: cartId, ownerId: null });
+  await page.keyboard.press("Escape");
+  await checkLayout(page);
+});
