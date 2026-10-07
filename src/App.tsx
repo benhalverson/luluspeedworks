@@ -19,6 +19,7 @@ import {
   type Category,
   createCatalogController,
 } from "./storefront/controller";
+import { OrdersPage } from "./storefront/orders";
 import {
   type Configuration,
   configureActionSchema,
@@ -36,6 +37,8 @@ export function App() {
   return (
     <Routes>
       <Route path="/checkout" element={<CheckoutPage />} />
+      <Route path="/orders" element={<OrdersPage />} />
+      <Route path="/orders/:orderId" element={<OrdersPage />} />
       <Route path="/admin/products" element={<AdminWorkspace />} />
       <Route
         path="/forgot-password"
