@@ -29,6 +29,7 @@ import {
   productDraftListSchema,
   productDraftResponseSchema,
 } from "./contracts";
+import { useDraftCreation } from "./creation";
 import {
   type Action,
   actionSchema,
@@ -447,7 +448,8 @@ function Workspace({
     Record<string, Action>
   >({});
   const mutationUnresolved = useRef<MutationAttempt | null>(null);
-  const creationUnresolved = useRef(false);
+  const creation = useDraftCreation(identity);
+  const creationUnresolved = creation.pending !== null;
   const locked = useRef(false);
   const photosInput = useRef<HTMLInputElement>(null);
   const printInput = useRef<HTMLInputElement>(null);
@@ -466,8 +468,10 @@ function Workspace({
   const completed =
     savedOperation?.state === "succeeded" &&
     (draft?.target.kind === "new" || savedOperation.action === "delete");
-  const disabled = busy || blocked || needsReconciliation || completed;
-  const navigationDisabled = busy || blocked || needsReconciliation;
+  const disabled =
+    busy || blocked || creationUnresolved || needsReconciliation || completed;
+  const navigationDisabled =
+    busy || blocked || creationUnresolved || needsReconciliation;
   const known =
     draft?.context.status === "available" ? draft.context : undefined;
   const answers = draft
@@ -628,10 +632,12 @@ function Workspace({
             return;
           }
           if (creationStarted()) {
-            creationUnresolved.current = true;
-            await refreshList();
+            await recoverCreation(assertCurrent);
+            return;
+          }
+          if (creationUnresolved) {
             setNotice(
-              `${reason} The creation outcome is unresolved. The conversation list cannot identify the result of this request. Reload saved state to review conversations before leaving this workspace.`,
+              `${reason} The creation outcome is unresolved. Keep this request and check again.`,
             );
             return;
           }
@@ -662,7 +668,7 @@ function Workspace({
         } catch (error) {
           if (stopRecovery(error, owner)) return;
           setNotice(
-            creationUnresolved.current
+            creationStarted() || creationUnresolved
               ? `${reason} The creation outcome is unresolved. Reload saved state to review conversations before leaving this workspace.`
               : `${reason} The saved outcome is unresolved. Reload saved state before making another change.`,
           );
@@ -699,6 +705,23 @@ function Workspace({
     setSelection({ kind: "photo" });
     setNotice("");
   }
+  function acceptCreation(created: ProductDraft) {
+    publish(created);
+    choose(created);
+    setEditing(created.id);
+    setBlocked(false);
+  }
+  async function recoverCreation(assertCurrent: () => void) {
+    const result = await creation.recover(acceptCreation, assertCurrent);
+    setBlocked(result === "missing");
+    setNotice(
+      result === "found"
+        ? "The original conversation has been recovered."
+        : result === "discarded"
+          ? "That conversation was discarded. You can start a new one."
+          : "The creation outcome is unresolved. No conversation was found for this request. Retry this same request when ready.",
+    );
+  }
   /** Save dirty answers before opening a separate immutable-target conversation. */
   function open(target: ProductDraftTarget) {
     let creating = false;
@@ -716,16 +739,9 @@ function Workspace({
             : undefined;
         if (existing) choose(existing);
         else {
-          creating = true;
-          const created = await ownedRequest(
-            "",
-            productDraftResponseSchema,
-            "POST",
-            { target },
-          );
-          publish(created);
-          choose(created);
-          setEditing(created.id);
+          await creation.begin(target, acceptCreation, assertCurrent, () => {
+            creating = true;
+          });
         }
       },
       id,
@@ -739,7 +755,7 @@ function Workspace({
       if (
         !savedOperation ||
         action.context?.operationId !== savedOperation.id ||
-        creationUnresolved.current ||
+        creationUnresolved ||
         !operationAllowed
       )
         return;
@@ -1401,38 +1417,51 @@ function Workspace({
               </Button>
             </div>
           ) : null}
-          {blocked ? (
+          {creationUnresolved ? (
+            <p role="status">
+              A conversation creation needs recovery before another can start.
+            </p>
+          ) : null}
+          {creation.canRetry ? (
             <Button
               disabled={busy}
               onClick={() =>
                 run(
-                  async () => {
-                    if (mutationUnresolved.current) {
-                      const result = await recoverOperation(
-                        mutationUnresolved.current.draftId,
-                      );
-                      setNotice(operationNotice(result));
-                      return;
-                    }
-                    if (creationUnresolved.current) {
-                      await refreshList();
-                      setNotice(
-                        "The creation outcome is unresolved. Saved conversations have been reloaded, but cannot identify the result of the creation request. Review conversations before leaving this workspace.",
-                      );
-                      return;
-                    }
-                    if (id) await reload(id);
-                    else {
-                      await refreshList();
-                      setBlocked(false);
-                    }
-                    setNotice(
-                      "Saved state reloaded. Review before continuing.",
-                    );
+                  async (assertCurrent) => {
+                    await creation.retry(acceptCreation, assertCurrent);
+                    setNotice("The original conversation has been recovered.");
                   },
                   id,
-                  () => creationUnresolved.current,
+                  () => true,
                 )
+              }
+            >
+              Retry this conversation request
+            </Button>
+          ) : null}
+          {blocked || creationUnresolved ? (
+            <Button
+              disabled={busy}
+              onClick={() =>
+                run(async (assertCurrent) => {
+                  if (mutationUnresolved.current) {
+                    const result = await recoverOperation(
+                      mutationUnresolved.current.draftId,
+                    );
+                    setNotice(operationNotice(result));
+                    return;
+                  }
+                  if (creationUnresolved) {
+                    await recoverCreation(assertCurrent);
+                    return;
+                  }
+                  if (id) await reload(id);
+                  else {
+                    await refreshList();
+                    setBlocked(false);
+                  }
+                  setNotice("Saved state reloaded. Review before continuing.");
+                }, id)
               }
             >
               Reload saved state
