@@ -731,9 +731,10 @@ it("switches a reviewed deletion back to an explicit update without deleting the
     screen.getByRole("button", { name: "Review product deletion" }),
   );
   await waitFor(() => expect(submit("delete")).toBeEnabled());
-  fireEvent.click(
-    screen.getByRole("button", { name: "Review product changes" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel deletion" }));
+  expect(writes()).toHaveLength(1);
+  expect(submit("update")).toBeDisabled();
+  fireEvent.click(await review());
   await waitFor(() => expect(submit("update")).toBeEnabled());
   expect(screen.queryByRole("button", { name: "Delete product" })).toBeNull();
   fireEvent.click(submit("update"));
@@ -1173,4 +1174,45 @@ it("rejects forged normal catalog actions after creation has completed", async (
   expect(writes().map((request) => request.path)).toEqual([
     `/${draftId}/submit`,
   ]);
+});
+
+it("restores an unconfirmed deletion with exact identity and cancels without a write", async () => {
+  saved = draft({
+    target: { kind: "existing", productId: 42 },
+    context: {
+      status: "available",
+      product: {
+        id: 42,
+        name: "Prepared part",
+        description: "Part",
+        price: 15,
+        image: "https://api.lulu.test/part.png",
+        filamentType: "PLA",
+        color: "Red",
+        skuNumber: "SKU-42",
+        publicFileServiceId: "file-42",
+      },
+      categories: [],
+    },
+  });
+  prepared = preparation("delete");
+  if (!prepared.snapshot) throw Error("Expected snapshot");
+  prepared.snapshot.image = "https://api.lulu.test/part.png";
+  renderWithClient(<App />);
+  const confirmation = await screen.findByRole("region", {
+    name: "Confirm product deletion",
+  });
+  expect(confirmation).toHaveTextContent("Delete Prepared part?");
+  expect(confirmation).toHaveTextContent("Product #42 · SKU SKU-42");
+  expect(within(confirmation).getByRole("img")).toHaveAttribute(
+    "src",
+    "https://api.lulu.test/part.png",
+  );
+  expect(writes()).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel deletion" }));
+  expect(
+    screen.queryByRole("region", { name: "Confirm product deletion" }),
+  ).toBeNull();
+  expect(writes()).toEqual([]);
+  expect(screen.queryByRole("button", { name: "Delete product" })).toBeNull();
 });
