@@ -152,21 +152,14 @@ it("reviews dirty answers at their saved revision and creates only after explici
     },
   ]);
   fireEvent.click(submit());
-  await screen.findByRole("button", { name: "Manage created product" });
+  await screen.findByRole("region", { name: "Product completion" });
   expect(writes().at(-1)).toEqual({
     path: `/${draftId}/submit`,
     method: "POST",
     body: { expectedRevision: 2, preparationId, action: "create" },
   });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Manage created product" }),
-  );
-  await waitFor(() =>
-    expect(writes().at(-1)?.body).toEqual({
-      requestKey: expect.any(String),
-      target: { kind: "existing", productId: 42 },
-    }),
-  );
+  expect(screen.queryByRole("region", { name: "Product Card" })).toBeNull();
+  expect(screen.getByLabelText("Product notes")).toBeEnabled();
 });
 
 it.each(["blocked", "unavailable", "stale"] as const)(
@@ -344,7 +337,7 @@ it.each(["lost response", "temporary failure"])(
         body: { operationId },
       }),
     );
-    await screen.findByRole("button", { name: "Manage created product" });
+    await screen.findByRole("region", { name: "Product completion" });
   },
 );
 
@@ -414,13 +407,13 @@ it("loads a completed but unmapped catalog outcome without publishing or repeati
   override = (request) =>
     request.path.endsWith("/operation") ? Response.json(unmapped) : undefined;
   renderWithClient(<App />);
-  await screen.findByRole("button", { name: "Manage created product" });
+  await screen.findByRole("region", { name: "Product completion" });
   expect(
     screen.getAllByText(
       /Not visible in the storefront.*Checkout not ready: unavailable_filament_id/,
     ).length,
   ).toBeGreaterThan(0);
-  expect(submit()).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Create product" })).toBeNull();
   expect(writes()).toHaveLength(0);
 });
 
@@ -460,7 +453,7 @@ it.each([
         },
       ]),
     );
-    await screen.findByRole("button", { name: "Manage created product" });
+    await screen.findByRole("region", { name: "Product completion" });
   },
 );
 
@@ -483,7 +476,7 @@ it("restores a failed operation as saved failure evidence without replaying subm
         })
       : undefined;
   renderWithClient(<App />);
-  await screen.findByText("Square rejected saved operation");
+  await screen.findByText(/Square rejected saved operation/);
   expect(writes()).toHaveLength(0);
   expect(
     screen.queryByRole("button", {
@@ -579,11 +572,11 @@ it("does not resubmit the same preparation after a saved update has succeeded", 
       });
   };
   renderWithClient(<App />);
-  await review();
-  await screen.findByText(/Product updated/);
-  expect(submit("update")).toBeDisabled();
-  fireEvent.click(submit("update"));
+  await screen.findByRole("region", { name: "Product completion" });
+  expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
   expect(writes()).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Edit product details" }));
+  expect(submit("update")).toBeDisabled();
   fireEvent.click(await review());
   await waitFor(() => expect(submit("update")).toBeEnabled());
   fireEvent.click(submit("update"));
@@ -697,7 +690,7 @@ it("refreshes the saved draft and catalog after lost submission is proven succee
   await review();
   await waitFor(() => expect(submit()).toBeEnabled());
   fireEvent.click(submit());
-  await screen.findByRole("button", { name: "Manage created product" });
+  await screen.findByRole("region", { name: "Product completion" });
   const evidenceIndex = requests
     .map((request) => request.path)
     .lastIndexOf(`/${draftId}/operation`);
@@ -806,7 +799,7 @@ it.each([null, []])(
           })
         : undefined;
     renderWithClient(<App />);
-    await screen.findByRole("button", { name: "Manage created product" });
+    await screen.findByRole("region", { name: "Product completion" });
     expect(
       screen.getByText(/Checkout not ready: readiness unavailable/),
     ).toBeVisible();
@@ -853,7 +846,7 @@ it("rejects a forged manage product ID after a confirmed creation", async () => 
   await review();
   await waitFor(() => expect(submit()).toBeEnabled());
   fireEvent.click(submit());
-  await screen.findByRole("button", { name: "Manage created product" });
+  await screen.findByRole("region", { name: "Product completion" });
   const surface = dispatch.mock.contexts.find(
     (context) => context instanceof SurfaceModel,
   );
@@ -954,7 +947,7 @@ it("keeps lost reconciliation unresolved when evidence changes the confirmed ope
       name: /Resolve saved operation|Check product operation/,
     }),
   );
-  await screen.findByRole("button", { name: "Manage created product" });
+  await screen.findByRole("region", { name: "Product completion" });
   expect(writes().map((request) => request.body)).toEqual([
     { operationId },
     { operationId },
@@ -1011,11 +1004,8 @@ it.each(["create", "delete"] as const)(
     await screen.findByText(
       action === "create" ? /Product created\./ : /Product deleted\./,
     );
-    await waitFor(() => expect(submit(action)).toBeDisabled());
-    expect(
-      screen.getByRole("list", { name: "Draft attachments" }),
-    ).toBeEmptyDOMElement();
-    expect(screen.getByLabelText("Correct a detail")).toBeDisabled();
+    await screen.findByRole("region", { name: "Product completion" });
+    expect(screen.queryByRole("region", { name: "Product Card" })).toBeNull();
     expect(
       screen.getByRole("button", { name: "Discard draft" }),
     ).toBeDisabled();
@@ -1155,11 +1145,11 @@ it("rejects forged normal catalog actions after creation has completed", async (
   await review();
   await waitFor(() => expect(submit()).toBeEnabled());
   fireEvent.click(submit());
-  await screen.findByRole("button", { name: "Manage created product" });
+  await screen.findByRole("region", { name: "Product completion" });
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "+ New product" })).toBeEnabled(),
   );
-  expect(submit()).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Create product" })).toBeNull();
   const surface = dispatch.mock.contexts.find(
     (context) => context instanceof SurfaceModel,
   );
@@ -1215,4 +1205,274 @@ it("restores an unconfirmed deletion with exact identity and cancels without a w
   ).toBeNull();
   expect(writes()).toEqual([]);
   expect(screen.queryByRole("button", { name: "Delete product" })).toBeNull();
+});
+
+it.each([false, true])(
+  "continues created product chat in an immutable existing-target conversation (reuse=%s)",
+  async (reuse) => {
+    let existing = draft({
+      id: otherId,
+      target: { kind: "existing", productId: 42 },
+    });
+    override = (request) => {
+      if (request.path === `/${draftId}/operation`)
+        return Response.json(mutationResult());
+      if (reuse && !request.path && request.method === "GET")
+        return Response.json({
+          drafts: [saved, existing].map(
+            ({
+              state: _state,
+              context: _context,
+              attachments: _attachments,
+              ...summary
+            }) => summary,
+          ),
+        });
+      if (request.path === `/${otherId}`) return Response.json(existing);
+      if (request.path === `/${otherId}/prepare`) {
+        existing = draft({
+          ...existing,
+          revision: 2,
+          state: {
+            answers: {},
+            pendingQuestions: [],
+            history: [{ role: "user", content: String(request.body.message) }],
+          },
+        });
+        return Response.json(existing);
+      }
+      if (request.path === `/${otherId}/pricing/prepare`) {
+        prepared = preparation("update", { id: otherId, draftRevision: 2 });
+        return Response.json({ preparation: prepared });
+      }
+    };
+    renderWithClient(<App />);
+    await screen.findByRole("region", { name: "Product completion" });
+    expect(writes()).toEqual([]);
+    fireEvent.change(screen.getByLabelText("Product notes"), {
+      target: { value: "Make the description clearer" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send instruction" }));
+    await waitFor(() => expect(submit("update")).toBeEnabled());
+    expect(
+      screen.getByRole("list", { name: "Conversation history" }),
+    ).toHaveTextContent("Make the description clearer");
+    expect(writes().filter((r) => !r.path)).toHaveLength(reuse ? 0 : 1);
+    expect(writes().filter((r) => r.path.endsWith("/submit"))).toEqual([]);
+    expect(
+      writes().find((r) => r.path === `/${otherId}/prepare`)?.body,
+    ).toEqual({
+      expectedRevision: 1,
+      answers: {},
+      message: "Make the description clearer",
+    });
+    expect(saved.target).toEqual({ kind: "new" });
+    expect(
+      screen.queryByRole("region", { name: "Product completion" }),
+    ).toBeNull();
+  },
+);
+
+it("refreshes the server price after saved corrections and hides stale prices while dirty", async () => {
+  prepared = preparation();
+  renderWithClient(<App />);
+  await review();
+  expect(screen.getByText(/Proposed online price:/)).toHaveTextContent(
+    "Proposed online price: $15.00",
+  );
+  fireEvent.change(screen.getByLabelText("Correct a detail"), {
+    target: { value: "markupPercentage" },
+  });
+  fireEvent.change(screen.getByLabelText("Online markup percentage"), {
+    target: { value: "75" },
+  });
+  expect(screen.getByText(/Proposed online price:/)).toHaveTextContent(
+    "awaiting server calculation",
+  );
+  override = (request) =>
+    request.path.endsWith("/pricing/prepare")
+      ? Response.json({
+          preparation: preparation("create", {
+            id: otherId,
+            draftRevision: 2,
+            pricing: {
+              ...preparation().pricing,
+              onlinePrice: 17.5,
+              markupPercentage: 75,
+            },
+          }),
+        })
+      : undefined;
+  fireEvent.click(screen.getByRole("button", { name: "Save draft answers" }));
+  await waitFor(() =>
+    expect(screen.getByText(/Proposed online price:/)).toHaveTextContent(
+      "Proposed online price: $17.50",
+    ),
+  );
+  expect(writes().map((r) => r.path)).toEqual([
+    `/${draftId}/prepare`,
+    `/${draftId}/pricing/prepare`,
+  ]);
+  expect(submit()).toBeEnabled();
+});
+
+it.each(["creation", "message"] as const)(
+  "retains follow-up notes after a lost %s response without repeating product creation",
+  async (failure) => {
+    let linked = draft({
+      id: otherId,
+      target: { kind: "existing", productId: 42 },
+    });
+    let failed = false;
+    override = (request) => {
+      if (request.path === `/${draftId}/operation`)
+        return Response.json(mutationResult());
+      if (
+        request.path === "" &&
+        request.method === "POST" &&
+        failure === "creation"
+      )
+        return Response.json(
+          { error: "Lost acknowledgement" },
+          { status: 503 },
+        );
+      if (
+        request.path.startsWith("/by-request-key/") ||
+        request.path === `/${otherId}`
+      )
+        return Response.json(linked);
+      if (request.path === `/${otherId}/prepare`) {
+        if (failure === "message" && !failed) {
+          failed = true;
+          return Response.json(
+            { error: "Retry the instruction" },
+            { status: 503 },
+          );
+        }
+        linked = draft({ ...linked, revision: 2 });
+        return Response.json(linked);
+      }
+      if (request.path === `/${otherId}/pricing/prepare`) {
+        prepared = preparation("update", { id: otherId, draftRevision: 2 });
+        return Response.json({ preparation: prepared });
+      }
+    };
+    renderWithClient(<App />);
+    await screen.findByRole("region", { name: "Product completion" });
+    fireEvent.change(screen.getByLabelText("Product notes"), {
+      target: { value: "Keep these follow-up notes" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send instruction" }));
+    await screen.findByText(
+      failure === "creation"
+        ? "The original conversation has been recovered."
+        : /Retry the instruction.*Saved state has been reloaded/,
+    );
+    expect(screen.getByLabelText("Product notes")).toHaveValue(
+      "Keep these follow-up notes",
+    );
+    expect(writes().filter((r) => !r.path)).toHaveLength(1);
+    expect(writes().filter((r) => r.path.endsWith("/submit"))).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Send instruction" }));
+    await waitFor(() => expect(submit("update")).toBeEnabled());
+    expect(writes().filter((r) => !r.path)).toHaveLength(1);
+    expect(screen.getByLabelText("Product notes")).toHaveValue("");
+  },
+);
+
+it.each([false, true])(
+  "does not continue a held product handoff after leaving the visit (reuse=%s)",
+  async (reuse) => {
+    const linked = draft({
+      id: otherId,
+      target: { kind: "existing", productId: 42 },
+    });
+    let release: ((value: Response) => void) | undefined;
+    override = (request) => {
+      if (request.path === `/${draftId}/operation`)
+        return Response.json(mutationResult());
+      if (reuse && !request.path && request.method === "GET")
+        return Response.json({
+          drafts: [saved, linked].map(
+            ({
+              state: _state,
+              context: _context,
+              attachments: _attachments,
+              ...summary
+            }) => summary,
+          ),
+        });
+      if (
+        reuse
+          ? request.path === `/${otherId}`
+          : !request.path && request.method === "POST"
+      )
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+    };
+    renderWithClient(<App />);
+    await screen.findByRole("region", { name: "Product completion" });
+    fireEvent.change(screen.getByLabelText("Product notes"), {
+      target: { value: "This belongs to the old visit" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send instruction" }));
+    await waitFor(() => expect(release).toBeDefined());
+    act(() => {
+      window.history.pushState({}, "", "/");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Product notes")).toBeNull(),
+    );
+    await act(() => release?.(Response.json(linked)));
+    expect(writes().filter((r) => r.path.endsWith("/prepare"))).toEqual([]);
+    expect(screen.queryByLabelText("Product notes")).toBeNull();
+  },
+);
+
+it("prepares a chat-requested deletion without authorizing it", async () => {
+  saved = draft({
+    target: { kind: "existing", productId: 42 },
+    state: {
+      answers: {},
+      history: [],
+      pendingQuestions: [],
+      interpretation: {
+        intent: "delete",
+        status: "prepared",
+        explanation: "Review this deletion",
+        confirmedCategoryNames: [],
+        proposedCategoryNames: [],
+        productionOptions: [],
+      },
+    },
+  });
+  renderWithClient(<App />);
+  await review();
+  fireEvent.change(screen.getByLabelText("Product notes"), {
+    target: { value: "Delete this product" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send instruction" }));
+  await waitFor(() => expect(submit("delete")).toBeEnabled());
+  expect(writes().at(-1)?.body).toEqual({
+    expectedRevision: 2,
+    action: "delete",
+  });
+  expect(
+    writes().filter((request) => request.path.endsWith("/submit")),
+  ).toEqual([]);
+});
+
+it("keeps an unavailable in-person price explicit in the completed product summary", async () => {
+  const result = mutationResult();
+  if (!result.product) throw Error("Expected product fixture");
+  result.product.inPersonPrice = null;
+  override = (request) =>
+    request.path.endsWith("/operation") ? Response.json(result) : undefined;
+  renderWithClient(<App />);
+  expect(
+    await screen.findByRole("region", { name: "Product completion" }),
+  ).toHaveTextContent("In-person price: Unavailable");
+  expect(writes()).toEqual([]);
 });

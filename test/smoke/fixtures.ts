@@ -1,5 +1,6 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { draft } from "../admin-fixtures";
+import { preparation } from "../admin-mutation-fixtures";
 
 type Reply = { status?: number; body: unknown };
 export function draftList(value = draft()) {
@@ -121,6 +122,18 @@ export const test = base.extend<{
               product: null,
               readiness: null,
               storefrontVisible: false,
+            },
+          };
+        else if (
+          request.method() === "POST" &&
+          url.pathname.endsWith("/pricing/prepare") &&
+          url.pathname.startsWith("/admin/product-drafts/")
+        )
+          reply = {
+            body: {
+              preparation: preparation(request.postDataJSON().action, {
+                draftRevision: request.postDataJSON().expectedRevision,
+              }),
             },
           };
         else if (
