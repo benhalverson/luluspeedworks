@@ -13,6 +13,7 @@ import { z } from "zod";
 import { BrandLink } from "../components/brand-link";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { imageUrl } from "../storefront/api";
 import { apiOrigin, authClient } from "../storefront/auth";
 import { ProductImage } from "../storefront/catalog";
 import { useCatalog } from "../storefront/queries";
@@ -802,6 +803,12 @@ function Workspace({
       return;
     }
     if (disabled) return;
+    if (action.name === "cancelDelete") {
+      setRequestedActions((current) => ({ ...current, [draft.id]: "update" }));
+      client.setQueryData(preparationKey, { preparation: null });
+      setNotice("Deletion canceled. No catalog changes were made.");
+      return;
+    }
     if (action.name === "review") {
       const requested = actionSchema.safeParse(action.context?.action);
       if (
@@ -1182,6 +1189,18 @@ function Workspace({
         mutation: {
           action: selectedAction,
           ready: canSubmit,
+          ...(selectedAction === "delete" &&
+          prepared?.snapshot?.target.kind === "existing" &&
+          matchesTarget
+            ? {
+                deletion: {
+                  name: prepared.snapshot.name,
+                  image: imageUrl(prepared.snapshot.image),
+                  sku: known?.product.skuNumber ?? "unavailable",
+                  productId: prepared.snapshot.target.productId,
+                },
+              }
+            : {}),
           completed: completed || Boolean(mutationUnresolved.current),
           review,
           status: operation.data?.operation

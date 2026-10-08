@@ -228,6 +228,14 @@ const mutationViewSchema = z.object({
   operationId: z.string().optional(),
   productId: z.number().int().positive().optional(),
   completed: z.boolean().optional(),
+  deletion: z
+    .object({
+      name: z.string(),
+      image: z.string(),
+      sku: z.string(),
+      productId: z.number(),
+    })
+    .optional(),
 });
 const mutationLabels = {
   create: "Create product",
@@ -362,6 +370,29 @@ const ProductCard = createComponentImplementation(
         </p>
         {mutation ? (
           <div className="grid gap-3">
+            {mutation.deletion ? (
+              <section
+                aria-label="Confirm product deletion"
+                className="rounded border border-destructive p-3"
+              >
+                <h3 className="font-semibold">
+                  Delete {mutation.deletion.name}?
+                </h3>
+                <p>
+                  Product #{mutation.deletion.productId} · SKU{" "}
+                  {mutation.deletion.sku}
+                </p>
+                {mutation.deletion.image ? (
+                  <AttachmentImage
+                    src={mutation.deletion.image}
+                    name={mutation.deletion.name}
+                  />
+                ) : (
+                  <p>Product image unavailable.</p>
+                )}
+                <p>Confirm only this product. Deletion cannot be undone.</p>
+              </section>
+            ) : null}
             <p className="whitespace-pre-wrap text-sm">{mutation.review}</p>
             <p role="status" className="text-sm">
               {mutation.status}
@@ -394,7 +425,10 @@ const ProductCard = createComponentImplementation(
                   onClick={() =>
                     void context.dispatchAction({
                       event: {
-                        name: "review",
+                        name:
+                          mutation.action === "delete"
+                            ? "cancelDelete"
+                            : "review",
                         context: {
                           draftId: props.draftId,
                           action:
@@ -406,7 +440,7 @@ const ProductCard = createComponentImplementation(
                 >
                   {mutation.action === "update"
                     ? "Review product deletion"
-                    : "Review product changes"}
+                    : "Cancel deletion"}
                 </Button>
               ) : null}
               <Button

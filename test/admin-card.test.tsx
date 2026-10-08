@@ -163,12 +163,10 @@ it.each(["create", "update", "delete"] as const)(
       );
     }
     if (kind === "delete") {
-      fireEvent.click(
-        screen.getByRole("button", { name: "Review product changes" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Cancel deletion" }));
       expect(action).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          name: "review",
+          name: "cancelDelete",
           context: { draftId, action: "update" },
         }),
       );
@@ -372,3 +370,26 @@ it("keeps legacy cards preparation-only when catalog mutation evidence is absent
     expect.objectContaining({ name: "save", context: { draftId } }),
   );
 });
+
+it.each(["https://api.lulu.test/photo.png", ""])(
+  "shows the exact deletion identity with image %s",
+  async (image) => {
+    const view = mutationCard("delete", true);
+    if (!view.mutation) throw Error("Expected mutation");
+    view.mutation = {
+      ...view.mutation,
+      deletion: { name: "Bracket A", image, sku: "SKU-42", productId: 42 },
+    };
+    renderWithClient(<DraftCard view={view} onAction={vi.fn()} />);
+    expect(
+      await screen.findByRole("region", { name: "Confirm product deletion" }),
+    ).toHaveTextContent("Delete Bracket A?");
+    expect(screen.getByText("Product #42 · SKU SKU-42")).toBeVisible();
+    if (image)
+      expect(screen.getByRole("img", { name: "Bracket A" })).toHaveAttribute(
+        "src",
+        image,
+      );
+    else expect(screen.getByText("Product image unavailable.")).toBeVisible();
+  },
+);
