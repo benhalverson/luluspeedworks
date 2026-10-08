@@ -71,7 +71,7 @@ for (const action of ["create", "update", "delete"] as const) {
           ? "Create product"
           : action === "delete"
             ? "Delete product"
-            : "Update product",
+            : "Save changes",
       exact: true,
     });
     await expect(submit).toBeEnabled();
@@ -86,7 +86,7 @@ for (const action of ["create", "update", "delete"] as const) {
     }
     await submit.click();
     await expect(
-      page.getByRole("region", { name: "Product Card" }),
+      page.getByRole("region", { name: "Product completion" }),
     ).toContainText(
       action === "create"
         ? "Product created."
@@ -96,7 +96,7 @@ for (const action of ["create", "update", "delete"] as const) {
     );
     await page.reload();
     await expect(
-      page.getByRole("region", { name: "Product Card" }),
+      page.getByRole("region", { name: "Product completion" }),
     ).toContainText(
       action === "create"
         ? "Product created."
