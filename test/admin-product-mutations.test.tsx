@@ -163,6 +163,7 @@ it("reviews dirty answers at their saved revision and creates only after explici
   );
   await waitFor(() =>
     expect(writes().at(-1)?.body).toEqual({
+      requestKey: expect.any(String),
       target: { kind: "existing", productId: 42 },
     }),
   );
@@ -1034,7 +1035,11 @@ it.each(["create", "delete"] as const)(
     fireEvent.click(screen.getByRole("button", { name: "+ New product" }));
     await screen.findByLabelText("Product name");
     expect(writes()).toEqual([
-      { path: "", method: "POST", body: { target: { kind: "new" } } },
+      {
+        path: "",
+        method: "POST",
+        body: { requestKey: expect.any(String), target: { kind: "new" } },
+      },
     ]);
     expect(screen.getByLabelText("Product name")).toBeEnabled();
   },

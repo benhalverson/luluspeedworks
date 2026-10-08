@@ -2255,7 +2255,7 @@ it("rejects forged and stale A2UI actions before any draft request", async () =>
     ),
   );
 });
-it("keeps failed creation unresolved through successful and failed list reviews", async () => {
+it("keeps failed creation unresolved through failed and missing request-key reads", async () => {
   drafts = [];
   let failList = false;
   let creations = 0;
@@ -2264,24 +2264,25 @@ it("keeps failed creation unresolved through successful and failed list reviews"
       creations++;
       return Promise.reject("Lost response");
     }
-    if (failList && url.pathname === "/admin/product-drafts")
-      return Response.json({ error: "Offline" }, { status: 503 });
+    if (url.pathname.startsWith("/admin/product-drafts/by-request-key/"))
+      return Response.json(
+        { error: "Offline" },
+        { status: failList ? 503 : 404 },
+      );
   };
   renderWithClient(<App />);
   await screen.findByText(
     "Select a product or start a new product conversation.",
   );
   click("+ New product");
-  await screen.findByText(
-    /Draft request failed. The creation outcome is unresolved/,
-  );
+  await screen.findByText(/The creation outcome is unresolved/);
   expect(screen.getByRole("button", { name: "+ New product" })).toBeDisabled();
   failList = true;
   click("Reload saved state");
   await screen.findByText(/Offline The creation outcome is unresolved/);
   failList = false;
   click("Reload saved state");
-  await screen.findByText(/Saved conversations have been reloaded/);
+  await screen.findByText(/No conversation was found for this request/);
   expect(screen.getByRole("button", { name: "+ New product" })).toBeDisabled();
   expect(creations).toBe(1);
 });
