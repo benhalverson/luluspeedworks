@@ -13,6 +13,7 @@ import { z } from "zod";
 import { BrandLink } from "../components/brand-link";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { imageUrl } from "../storefront/api";
 import { apiOrigin, authClient } from "../storefront/auth";
 import { ProductImage } from "../storefront/catalog";
 import { useCatalog } from "../storefront/queries";
@@ -29,6 +30,7 @@ import {
   productDraftListSchema,
   productDraftResponseSchema,
 } from "./contracts";
+import { useDraftCreation } from "./creation";
 import {
   type Action,
   actionSchema,
@@ -447,7 +449,8 @@ function Workspace({
     Record<string, Action>
   >({});
   const mutationUnresolved = useRef<MutationAttempt | null>(null);
-  const creationUnresolved = useRef(false);
+  const creation = useDraftCreation(identity);
+  const creationUnresolved = creation.pending !== null;
   const locked = useRef(false);
   const photosInput = useRef<HTMLInputElement>(null);
   const printInput = useRef<HTMLInputElement>(null);
@@ -466,8 +469,17 @@ function Workspace({
   const completed =
     savedOperation?.state === "succeeded" &&
     (draft?.target.kind === "new" || savedOperation.action === "delete");
-  const disabled = busy || blocked || needsReconciliation || completed;
-  const navigationDisabled = busy || blocked || needsReconciliation;
+  const disabled =
+    busy || blocked || creationUnresolved || needsReconciliation || completed;
+  const navigationDisabled =
+    busy || blocked || creationUnresolved || needsReconciliation;
+  const continueProductId =
+    completed &&
+    savedOperation?.action === "create" &&
+    !mutationUnresolved.current
+      ? savedOperation.productId
+      : null;
+  const composerDisabled = continueProductId ? navigationDisabled : disabled;
   const known =
     draft?.context.status === "available" ? draft.context : undefined;
   const answers = draft
@@ -568,6 +580,7 @@ function Workspace({
       mutationUnresolved.current = null;
       setBlocked(false);
       if (result.operation.state === "succeeded") {
+        setEditing(null);
         await reload(draftId);
         await refreshCatalog();
       }
@@ -591,17 +604,28 @@ function Workspace({
       return "The product operation outcome is unresolved. Reload saved state before retrying.";
     const current = result.operation;
     if (current.state !== "succeeded")
-      return (
-        current.error ||
-        `Product operation ${current.state}. Resolve the saved operation before making another catalog change.`
-      );
+      return `${current.error ? `${current.error} ` : ""}${
+        {
+          prepared:
+            "Product preparation saved. Square synchronization has not been confirmed.",
+          pending:
+            "Square synchronization is pending. Its outcome is not yet confirmed.",
+          item_confirmed:
+            "Square item confirmed. Photo synchronization is pending.",
+          square_confirmed: "Square confirmed. Local catalog save is pending.",
+          repair_required:
+            "The saved operation needs repair. Check it before trying another catalog change.",
+          failed:
+            "Product operation failed. Review the saved state before preparing another change.",
+        }[current.state]
+      }`;
     if (current.action === "delete")
       return "Product deleted. Saved operation and file cleanup are retained.";
     return `Product ${current.action === "create" ? "created" : "updated"}. ${result.storefrontVisible ? "Visible in the storefront." : "Not visible in the storefront."} ${result.readiness?.checkoutReady ? "Ready for checkout." : `Checkout not ready: ${result.readiness?.reasons.join(", ") || "readiness unavailable"}.`}`;
   }
   function run(
     work: (assertCurrent: () => void) => Promise<void>,
-    currentId: string | null | undefined = id,
+    currentId: string | null | undefined | (() => string) = id,
     creationStarted: () => boolean = () => false,
     operationStarted: () => MutationAttempt | null = () => null,
   ) {
@@ -628,20 +652,24 @@ function Workspace({
             return;
           }
           if (creationStarted()) {
-            creationUnresolved.current = true;
-            await refreshList();
+            await recoverCreation(assertCurrent);
+            return;
+          }
+          if (creationUnresolved) {
             setNotice(
-              `${reason} The creation outcome is unresolved. The conversation list cannot identify the result of this request. Reload saved state to review conversations before leaving this workspace.`,
+              `${reason} The creation outcome is unresolved. Keep this request and check again.`,
             );
             return;
           }
-          if (currentId) {
+          const recoveryId =
+            typeof currentId === "function" ? currentId() : currentId;
+          if (recoveryId) {
             try {
-              await reload(currentId);
+              await reload(recoveryId);
             } catch (error) {
               if (stopRecovery(error, owner)) return;
               const tombstone = await ownedRequest(
-                `/${currentId}/cleanup`,
+                `/${recoveryId}/cleanup`,
                 draftCleanupResponseSchema,
               );
               publishCleanup(tombstone);
@@ -662,7 +690,7 @@ function Workspace({
         } catch (error) {
           if (stopRecovery(error, owner)) return;
           setNotice(
-            creationUnresolved.current
+            creationStarted() || creationUnresolved
               ? `${reason} The creation outcome is unresolved. Reload saved state to review conversations before leaving this workspace.`
               : `${reason} The saved outcome is unresolved. Reload saved state before making another change.`,
           );
@@ -684,6 +712,32 @@ function Workspace({
     clearEdits(currentDraft.id);
     return result;
   }
+  async function prepareReview(currentDraft: ProductDraft) {
+    const owner = generation.current;
+    const reviewKey = [...key, currentDraft.id, "preparation"];
+    const action =
+      currentDraft.target.kind === "new"
+        ? "create"
+        : currentDraft.state.interpretation?.intent === "delete"
+          ? "delete"
+          : "update";
+    setRequestedActions((current) => ({
+      ...current,
+      [currentDraft.id]: action,
+    }));
+    await client.cancelQueries({ queryKey: reviewKey, exact: true });
+    assertVisit(owner);
+    const result = await ownedRequest(
+      `/${currentDraft.id}/pricing/prepare`,
+      preparationResponseSchema,
+      "POST",
+      {
+        expectedRevision: currentDraft.revision,
+        action,
+      },
+    );
+    client.setQueryData(reviewKey, result);
+  }
   function clearEdits(draftId: string) {
     setEdits((current) => {
       const next = { ...current };
@@ -698,6 +752,29 @@ function Workspace({
     setView("conversations");
     setSelection({ kind: "photo" });
     setNotice("");
+  }
+  function acceptCreation(created: ProductDraft) {
+    if (
+      continueProductId &&
+      created.target.kind === "existing" &&
+      created.target.productId === continueProductId
+    )
+      setMessages((current) => ({ ...current, [created.id]: message }));
+    publish(created);
+    choose(created);
+    setEditing(created.id);
+    setBlocked(false);
+  }
+  async function recoverCreation(assertCurrent: () => void) {
+    const result = await creation.recover(acceptCreation, assertCurrent);
+    setBlocked(result === "missing");
+    setNotice(
+      result === "found"
+        ? "The original conversation has been recovered."
+        : result === "discarded"
+          ? "That conversation was discarded. You can start a new one."
+          : "The creation outcome is unresolved. No conversation was found for this request. Retry this same request when ready.",
+    );
   }
   /** Save dirty answers before opening a separate immutable-target conversation. */
   function open(target: ProductDraftTarget) {
@@ -716,16 +793,9 @@ function Workspace({
             : undefined;
         if (existing) choose(existing);
         else {
-          creating = true;
-          const created = await ownedRequest(
-            "",
-            productDraftResponseSchema,
-            "POST",
-            { target },
-          );
-          publish(created);
-          choose(created);
-          setEditing(created.id);
+          await creation.begin(target, acceptCreation, assertCurrent, () => {
+            creating = true;
+          });
         }
       },
       id,
@@ -739,7 +809,7 @@ function Workspace({
       if (
         !savedOperation ||
         action.context?.operationId !== savedOperation.id ||
-        creationUnresolved.current ||
+        creationUnresolved ||
         !operationAllowed
       )
         return;
@@ -764,6 +834,7 @@ function Workspace({
           mutationUnresolved.current = null;
           setBlocked(false);
           setNotice(operationNotice(result));
+          setEditing(null);
           await reload(draft.id);
           await refreshCatalog();
         },
@@ -773,19 +844,13 @@ function Workspace({
       );
       return;
     }
-    if (action.name === "manage") {
-      if (
-        mutationUnresolved.current ||
-        savedOperation?.state !== "succeeded" ||
-        savedOperation.action !== "create" ||
-        action.context?.productId !== savedOperation.productId ||
-        !savedOperation.productId
-      )
-        return;
-      open({ kind: "existing", productId: savedOperation.productId });
+    if (disabled) return;
+    if (action.name === "cancelDelete") {
+      setRequestedActions((current) => ({ ...current, [draft.id]: "update" }));
+      client.setQueryData(preparationKey, { preparation: null });
+      setNotice("Deletion canceled. No catalog changes were made.");
       return;
     }
-    if (disabled) return;
     if (action.name === "review") {
       const requested = actionSchema.safeParse(action.context?.action);
       if (
@@ -847,6 +912,7 @@ function Workspace({
             return;
           }
           setNotice(operationNotice(result));
+          setEditing(null);
           await reload(draft.id);
           await refreshCatalog();
         },
@@ -914,7 +980,8 @@ function Workspace({
     }
     if (action.name === "save") {
       run(async () => {
-        await saveCurrent(draft);
+        const next = await saveCurrent(draft);
+        await prepareReview(next);
         setEditing(null);
         setNotice("Draft answers saved. No catalog changes were made.");
       });
@@ -1154,6 +1221,14 @@ function Workspace({
         ...prepared.validation.map((item) => item.message),
       ].join("\n")
     : "Review the product to verify pricing and catalog details.";
+  const showCompletion = Boolean(
+    draft &&
+      !mutationUnresolved.current &&
+      savedOperation?.state === "succeeded" &&
+      editing !== draft.id &&
+      !edits[draft.id] &&
+      (!prepared || prepared.id === savedOperation.preparationId),
+  );
   const card: CardView | undefined = draft
     ? {
         draftId: draft.id,
@@ -1164,10 +1239,29 @@ function Workspace({
             : title(draft)),
         busy: busy || (blocked && !mutationUnresolved.current),
         mutation: {
-          action: selectedAction,
+          action:
+            showCompletion && savedOperation
+              ? savedOperation.action
+              : selectedAction,
           ready: canSubmit,
+          ...(selectedAction === "delete" &&
+          prepared?.snapshot?.target.kind === "existing" &&
+          matchesTarget
+            ? {
+                deletion: {
+                  name: prepared.snapshot.name,
+                  image: imageUrl(prepared.snapshot.image),
+                  sku: known?.product.skuNumber ?? "unavailable",
+                  productId: prepared.snapshot.target.productId,
+                },
+              }
+            : {}),
           completed: completed || Boolean(mutationUnresolved.current),
-          review,
+          finished: showCompletion,
+          review:
+            showCompletion && operation.data?.product
+              ? `Online price: ${money.format(operation.data.product.price)} · In-person price: ${operation.data.product.inPersonPrice === null ? "Unavailable" : money.format(operation.data.product.inPersonPrice)}`
+              : review,
           status: operation.data?.operation
             ? operationNotice(operation.data)
             : preparation.isError || operation.isError
@@ -1183,12 +1277,6 @@ function Workspace({
             savedOperation.cleanup.some((item) => item.status === "pending"))
             ? { operationId: savedOperation.id }
             : {}),
-          ...(!mutationUnresolved.current &&
-          savedOperation?.state === "succeeded" &&
-          savedOperation.action === "create" &&
-          savedOperation.productId
-            ? { productId: savedOperation.productId }
-            : {}),
         },
         questions: draft.state.pendingQuestions
           .map((question) => question.prompt)
@@ -1202,7 +1290,7 @@ function Workspace({
               confirmed: interpretation.confirmedCategoryNames.includes(name),
             }))
           : [],
-        summary: `${answers.description ?? ""}\nMaterial: ${answers.filamentType || "Not supplied"} · Color: ${answers.color || "Not supplied"}\nCategories: ${categorySummary || "Not supplied"}\n${known ? `Current catalog online price: ${money.format(known.product.price)} · ` : ""}Online markup: ${answers.markupPercentage || "Not supplied"}${answers.markupPercentage ? "%" : ""} · Proposed online price: awaiting server calculation · In-person price: ${answers.inPersonPrice || "Not supplied"}`,
+        summary: `${answers.description ?? ""}\nMaterial: ${answers.filamentType || "Not supplied"} · Color: ${answers.color || "Not supplied"}\nCategories: ${categorySummary || "Not supplied"}\n${known ? `Current catalog online price: ${money.format(known.product.price)} · ` : ""}Online markup: ${answers.markupPercentage || "Not supplied"}${answers.markupPercentage ? "%" : ""} · Proposed online price: ${prepared?.status === "ready" && prepared.draftRevision === draft.revision && !edits[draft.id] && prepared.pricing.onlinePrice !== null ? money.format(prepared.pricing.onlinePrice) : "awaiting server calculation"} · In-person price: ${answers.inPersonPrice || "Not supplied"}`,
         actionLabel:
           draft.target.kind === "new"
             ? "Create product — unavailable"
@@ -1257,42 +1345,53 @@ function Workspace({
                   : (answers[field] ?? ""),
             disabled,
           })),
-        attachments: [
-          ...draft.attachments.photoOrder.flatMap((photoId) =>
-            draft.attachments.photos.filter((photo) => photo.id === photoId),
-          ),
-          ...(draft.attachments.printFile ? [draft.attachments.printFile] : []),
-        ]
-          .map((item, index) => ({
-            id: item.id,
-            name: item.name,
-            image: item.imageUrl ? new URL(item.imageUrl, apiOrigin).href : "",
-            status: "Saved",
-            photo: item.kind === "photo",
-            primary: item.id === draft.attachments.primaryPhotoId,
-            first: index === 0,
-            last: index === draft.attachments.photos.length - 1,
-            busy: disabled,
-            reselect: false,
-            resolve: false,
-          }))
-          .concat(
-            draft.attachments.transfers
-              .filter((item) => item.status !== "saved")
-              .map((item) => ({
-                id: item.id,
-                name: item.name,
-                image: "",
-                status: `${item.status === "pending" ? "Incomplete transfer" : item.status}${item.error ? `: ${item.error}` : ""}. ${item.requiresReselection ? "Reselect this file to continue." : "Reload to resolve this transfer."}`,
-                photo: false,
-                primary: false,
-                first: true,
-                last: true,
-                busy: disabled,
-                reselect: item.kind === "print" || item.requiresReselection,
-                resolve: item.kind === "print" || !item.requiresReselection,
-              })),
-          ),
+        attachments:
+          completed || draft.context.status === "unavailable"
+            ? []
+            : [
+                ...draft.attachments.photoOrder.flatMap((photoId) =>
+                  draft.attachments.photos.filter(
+                    (photo) => photo.id === photoId,
+                  ),
+                ),
+                ...(draft.attachments.printFile
+                  ? [draft.attachments.printFile]
+                  : []),
+              ]
+                .map((item, index) => ({
+                  id: item.id,
+                  name: item.name,
+                  image: item.imageUrl
+                    ? new URL(item.imageUrl, apiOrigin).href
+                    : "",
+                  status: "Saved",
+                  photo: item.kind === "photo",
+                  primary: item.id === draft.attachments.primaryPhotoId,
+                  first: index === 0,
+                  last: index === draft.attachments.photos.length - 1,
+                  busy: disabled,
+                  reselect: false,
+                  resolve: false,
+                }))
+                .concat(
+                  draft.attachments.transfers
+                    .filter((item) => item.status !== "saved")
+                    .map((item) => ({
+                      id: item.id,
+                      name: item.name,
+                      image: "",
+                      status: `${item.status === "pending" ? "Incomplete transfer" : item.status}${item.error ? `: ${item.error}` : ""}. ${item.requiresReselection ? "Reselect this file to continue." : "Reload to resolve this transfer."}`,
+                      photo: false,
+                      primary: false,
+                      first: true,
+                      last: true,
+                      busy: disabled,
+                      reselect:
+                        item.kind === "print" || item.requiresReselection,
+                      resolve:
+                        item.kind === "print" || !item.requiresReselection,
+                    })),
+                ),
       }
     : undefined;
   const visibleProducts = catalog.snapshot?.products.filter((product) =>
@@ -1390,38 +1489,51 @@ function Workspace({
               </Button>
             </div>
           ) : null}
-          {blocked ? (
+          {creationUnresolved ? (
+            <p role="status">
+              A conversation creation needs recovery before another can start.
+            </p>
+          ) : null}
+          {creation.canRetry ? (
             <Button
               disabled={busy}
               onClick={() =>
                 run(
-                  async () => {
-                    if (mutationUnresolved.current) {
-                      const result = await recoverOperation(
-                        mutationUnresolved.current.draftId,
-                      );
-                      setNotice(operationNotice(result));
-                      return;
-                    }
-                    if (creationUnresolved.current) {
-                      await refreshList();
-                      setNotice(
-                        "The creation outcome is unresolved. Saved conversations have been reloaded, but cannot identify the result of the creation request. Review conversations before leaving this workspace.",
-                      );
-                      return;
-                    }
-                    if (id) await reload(id);
-                    else {
-                      await refreshList();
-                      setBlocked(false);
-                    }
-                    setNotice(
-                      "Saved state reloaded. Review before continuing.",
-                    );
+                  async (assertCurrent) => {
+                    await creation.retry(acceptCreation, assertCurrent);
+                    setNotice("The original conversation has been recovered.");
                   },
                   id,
-                  () => creationUnresolved.current,
+                  () => true,
                 )
+              }
+            >
+              Retry this conversation request
+            </Button>
+          ) : null}
+          {blocked || creationUnresolved ? (
+            <Button
+              disabled={busy}
+              onClick={() =>
+                run(async (assertCurrent) => {
+                  if (mutationUnresolved.current) {
+                    const result = await recoverOperation(
+                      mutationUnresolved.current.draftId,
+                    );
+                    setNotice(operationNotice(result));
+                    return;
+                  }
+                  if (creationUnresolved) {
+                    await recoverCreation(assertCurrent);
+                    return;
+                  }
+                  if (id) await reload(id);
+                  else {
+                    await refreshList();
+                    setBlocked(false);
+                  }
+                  setNotice("Saved state reloaded. Review before continuing.");
+                }, id)
               }
             >
               Reload saved state
@@ -1654,30 +1766,72 @@ function Workspace({
                     className="mt-6 grid gap-4 rounded-lg border border-border bg-card p-4"
                     onSubmit={(event) => {
                       event.preventDefault();
-                      if (!message.trim() || disabled) return;
-                      run(async () => {
-                        const next = await ownedRequest(
-                          `/${draft.id}/prepare`,
-                          productDraftResponseSchema,
-                          "POST",
-                          {
-                            expectedRevision: draft.revision,
-                            answers: serializedAnswers,
-                            message: message.trim(),
-                          },
-                        );
-                        publish(next);
-                        clearEdits(draft.id);
-                        setEditing(null);
-                        setMessages((current) => ({
-                          ...current,
-                          [draft.id]: "",
-                        }));
-                        setNotice(
-                          next.state.interpretation?.explanation ??
-                            "Draft preparation saved.",
-                        );
-                      });
+                      if (!message.trim() || composerDisabled) return;
+                      let currentDraft = draft;
+                      let creating = false;
+                      run(
+                        async (assertCurrent) => {
+                          if (continueProductId) {
+                            const existing = active.find(
+                              (item) =>
+                                item.target.kind === "existing" &&
+                                item.target.productId === continueProductId,
+                            );
+                            if (existing) {
+                              currentDraft = await reload(existing.id);
+                              choose(currentDraft);
+                            } else {
+                              await creation.begin(
+                                {
+                                  kind: "existing",
+                                  productId: continueProductId,
+                                },
+                                (created) => {
+                                  currentDraft = created;
+                                  acceptCreation(created);
+                                },
+                                assertCurrent,
+                                () => {
+                                  creating = true;
+                                },
+                              );
+                              creating = false;
+                            }
+                            assertCurrent();
+                            setMessages((current) => ({
+                              ...current,
+                              [currentDraft.id]: message,
+                            }));
+                          }
+                          const next = await ownedRequest(
+                            `/${currentDraft.id}/prepare`,
+                            productDraftResponseSchema,
+                            "POST",
+                            {
+                              expectedRevision: currentDraft.revision,
+                              answers: continueProductId
+                                ? {}
+                                : serializedAnswers,
+                              message: message.trim(),
+                            },
+                          );
+                          publish(next);
+                          clearEdits(currentDraft.id);
+                          setEditing(null);
+                          setMessages((current) => ({
+                            ...current,
+                            [draft.id]: "",
+                            [currentDraft.id]: "",
+                          }));
+                          await prepareReview(next);
+                          setNotice(
+                            next.state.interpretation?.explanation ??
+                              "Draft preparation saved. Review prices before confirming catalog changes.",
+                          );
+                        },
+                        () => currentDraft.id,
+                        () => creating,
+                      );
                     }}
                   >
                     {queued?.files.length ? (
@@ -1704,7 +1858,7 @@ function Workspace({
                       Product notes
                       <textarea
                         className="min-h-24 w-full rounded border border-border bg-background p-3 focus-visible:outline-2 focus-visible:outline-primary"
-                        disabled={disabled}
+                        disabled={composerDisabled}
                         value={message}
                         onChange={(event) =>
                           setMessages((current) => ({
@@ -1768,7 +1922,7 @@ function Workspace({
                     </p>
                     <Button
                       type="submit"
-                      disabled={disabled || !message.trim()}
+                      disabled={composerDisabled || !message.trim()}
                     >
                       Send instruction
                     </Button>

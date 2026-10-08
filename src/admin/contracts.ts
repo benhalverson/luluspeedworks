@@ -19,6 +19,14 @@ export const savedAttachmentSchema = z
     status: z.literal("saved"),
     imageUrl: z.string().nullable(),
     publicFileServiceId: z.string().nullable(),
+    catalogSource: z
+      .object({
+        productId: z.number().int().positive(),
+        url: z.string(),
+        managed: z.boolean(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const attachmentTransferSchema = z
@@ -176,6 +184,7 @@ export const productDraftStateSchema = z
   .strict();
 export const beginProductDraftSchema = z
   .object({
+    requestKey: z.string().uuid().optional(),
     target: productDraftTargetSchema,
     state: productDraftStateSchema.optional(),
   })
@@ -213,6 +222,7 @@ export const productDraftContextSchema = z.discriminatedUnion("status", [
           name: z.string(),
           description: z.string(),
           image: z.string().nullable(),
+          imageGallery: z.array(z.string()).optional(),
           price: z.number(),
           markupPercentage: z
             .number()

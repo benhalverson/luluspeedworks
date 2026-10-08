@@ -20,6 +20,7 @@ import {
   transfer,
   transferId,
 } from "./admin-fixtures";
+import { preparation } from "./admin-mutation-fixtures";
 import { apiPage, categories } from "./catalog-fixtures";
 import { renderWithClient, testClient } from "./query-client";
 
@@ -108,6 +109,12 @@ beforeEach(() => {
       return current.status === "active"
         ? Response.json(current)
         : Response.json({ error: "Draft not found" }, { status: 404 });
+    if (method === "POST" && path.endsWith("/pricing/prepare"))
+      return Response.json({
+        preparation: preparation(body.action, {
+          draftRevision: current.revision,
+        }),
+      });
     if (method === "POST" && path.endsWith("/prepare")) {
       current.revision++;
       current.state.answers = { ...current.state.answers, ...body.answers };
@@ -268,7 +275,11 @@ it("keeps discarded cleanup, active editors and Recent selection together while 
   );
   expect(screen.getByLabelText("Product notes")).toHaveValue("Unsent note");
   expect(
-    requests.filter((request) => request.path.endsWith("/prepare")),
+    requests.filter(
+      (request) =>
+        request.path.endsWith("/prepare") &&
+        !request.path.endsWith("/pricing/prepare"),
+    ),
   ).toHaveLength(0);
 });
 
@@ -793,8 +804,8 @@ it("requires fresh authorization on route re-entry despite an earlier pending sa
   ]);
   let resolveSave: ((response: Response) => void) | undefined;
   let resolveAccess: ((response: Response) => void) | undefined;
-  override = (_url, init) =>
-    init?.method === "POST"
+  override = (url, init) =>
+    init?.method === "POST" && !url.pathname.endsWith("/pricing/prepare")
       ? new Promise<Response>((resolve) => {
           resolveSave = resolve;
         })
@@ -1708,7 +1719,10 @@ it("browses authoritative products, saves independent facts through the real car
   expect(current().state.answers.notes).toBe("Keep my jig");
   expect(
     requests
-      .filter((r) => r.path.endsWith("/prepare"))
+      .filter(
+        (r) =>
+          r.path.endsWith("/prepare") && !r.path.endsWith("/pricing/prepare"),
+      )
       .map((r) => r.body.expectedRevision),
   ).toEqual([1, 2, 3]);
 });
@@ -2009,10 +2023,15 @@ it("rejects invalid local files without transfer, uploads valid photos, and keep
   expect(screen.getByText("Saved photo preview unavailable.")).toBeVisible();
   click("Save draft answers");
   await screen.findByText("Draft answers saved. No catalog changes were made.");
-  expect(screen.queryByRole("region", { name: "Product Card" })).toBeNull();
-  expect(screen.getByText(/Saved draft · 1 photos/)).toBeVisible();
-  click("Edit draft facts");
-  expect(await screen.findByAltText("part.png")).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Product Card" }),
+  ).toHaveTextContent("Online price: $15.00");
+  expect(
+    within(
+      screen.getByRole("list", { name: "Draft attachments" }),
+    ).getAllByRole("listitem"),
+  ).toHaveLength(1);
+  expect(screen.getByText("Saved photo preview unavailable.")).toBeVisible();
 });
 it("blocks unresolved writes, reloads before retry, and guards leaving while a write is pending", async () => {
   let rejectWrite: ((value: Response) => void) | undefined;
@@ -2231,8 +2250,8 @@ it("rejects forged and stale A2UI actions before any draft request", async () =>
   expect(screen.getByLabelText("Product name")).toHaveValue("Keep");
   expect(requests.filter((r) => r.method !== "GET")).toHaveLength(0);
   let resolve: ((value: Response) => void) | undefined;
-  override = (_url, init) =>
-    init?.method === "POST"
+  override = (url, init) =>
+    init?.method === "POST" && !url.pathname.endsWith("/pricing/prepare")
       ? new Promise<Response>((done) => {
           resolve = done;
         })
@@ -2255,7 +2274,7 @@ it("rejects forged and stale A2UI actions before any draft request", async () =>
     ),
   );
 });
-it("keeps failed creation unresolved through successful and failed list reviews", async () => {
+it("keeps failed creation unresolved through failed and missing request-key reads", async () => {
   drafts = [];
   let failList = false;
   let creations = 0;
@@ -2264,24 +2283,25 @@ it("keeps failed creation unresolved through successful and failed list reviews"
       creations++;
       return Promise.reject("Lost response");
     }
-    if (failList && url.pathname === "/admin/product-drafts")
-      return Response.json({ error: "Offline" }, { status: 503 });
+    if (url.pathname.startsWith("/admin/product-drafts/by-request-key/"))
+      return Response.json(
+        { error: "Offline" },
+        { status: failList ? 503 : 404 },
+      );
   };
   renderWithClient(<App />);
   await screen.findByText(
     "Select a product or start a new product conversation.",
   );
   click("+ New product");
-  await screen.findByText(
-    /Draft request failed. The creation outcome is unresolved/,
-  );
+  await screen.findByText(/The creation outcome is unresolved/);
   expect(screen.getByRole("button", { name: "+ New product" })).toBeDisabled();
   failList = true;
   click("Reload saved state");
   await screen.findByText(/Offline The creation outcome is unresolved/);
   failList = false;
   click("Reload saved state");
-  await screen.findByText(/Saved conversations have been reloaded/);
+  await screen.findByText(/No conversation was found for this request/);
   expect(screen.getByRole("button", { name: "+ New product" })).toBeDisabled();
   expect(creations).toBe(1);
 });
@@ -2309,8 +2329,8 @@ it("keeps active cleanup distinct from discard when a save and authoritative rea
 });
 it("serializes duplicate gestures and protects upload and form controls during a write", async () => {
   let resolve: ((value: Response) => void) | undefined;
-  override = (_url, init) =>
-    init?.method === "POST"
+  override = (url, init) =>
+    init?.method === "POST" && !url.pathname.endsWith("/pricing/prepare")
       ? new Promise<Response>((done) => {
           resolve = done;
         })
@@ -2512,7 +2532,11 @@ it.each([
     );
     expect(
       requests
-        .filter((request) => request.path.endsWith("/prepare"))
+        .filter(
+          (request) =>
+            request.path.endsWith("/prepare") &&
+            !request.path.endsWith("/pricing/prepare"),
+        )
         .map((request) => request.body.expectedRevision),
     ).toEqual([2, 4]);
     expect(current().state.answers.name).toBe("Kept through cleanup");
@@ -2584,7 +2608,13 @@ it("renders one prepared card with direct category confirmation and authoritativ
     categoryNames: ["New parts", "Existing parts"],
   });
   override = (url, init) => {
-    if (!url.pathname.endsWith("/prepare")) return;
+    if (
+      !(
+        url.pathname.endsWith("/prepare") &&
+        !url.pathname.endsWith("/pricing/prepare")
+      )
+    )
+      return;
     const body = JSON.parse(String(init?.body));
     if (!body.confirmCategoryName) return;
     requests.push({ path: url.pathname, method: "POST", body });
@@ -2602,8 +2632,13 @@ it("renders one prepared card with direct category confirmation and authoritativ
   click("Confirm new category: New parts");
   await settled();
   expect(
-    requests.filter((request) => request.path.endsWith("/prepare")).at(-1)
-      ?.body,
+    requests
+      .filter(
+        (request) =>
+          request.path.endsWith("/prepare") &&
+          !request.path.endsWith("/pricing/prepare"),
+      )
+      .at(-1)?.body,
   ).toMatchObject({ expectedRevision: 2, confirmCategoryName: "New parts" });
   expect(requests.every((request) => !("message" in request.body))).toBe(true);
   expect(
@@ -2628,7 +2663,13 @@ it("replaces a complete instruction with compact review, retaining direct answer
     target: { value: "Direct name" },
   });
   override = (url, init) => {
-    if (!url.pathname.endsWith("/prepare")) return;
+    if (
+      !(
+        url.pathname.endsWith("/prepare") &&
+        !url.pathname.endsWith("/pricing/prepare")
+      )
+    )
+      return;
     const body = JSON.parse(String(init?.body));
     expect(body.answers.name).toBe("Direct name");
     expect(body.message).toBe("Use 50 percent markup");
@@ -2665,7 +2706,7 @@ it("replaces a complete instruction with compact review, retaining direct answer
   expect(
     screen.getByRole("region", { name: "Product Card" }),
   ).toHaveTextContent("Known description");
-  expect(screen.getByRole("button", { name: "Create product" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Create product" })).toBeEnabled();
   expect(screen.getByLabelText("Product notes")).toHaveValue("");
 });
 
@@ -2872,7 +2913,9 @@ it("does not replace a newer authoritative read with an older delayed save respo
   await ready();
   let release: ((response: Response) => void) | undefined;
   override = (url, init) =>
-    url.pathname.endsWith("/prepare") && init?.method === "POST"
+    url.pathname.endsWith("/prepare") &&
+    !url.pathname.endsWith("/pricing/prepare") &&
+    init?.method === "POST"
       ? new Promise<Response>((resolve) => {
           release = resolve;
         })
@@ -2933,7 +2976,9 @@ it.each(
     await ready();
     let finish: ((response: Response) => void) | undefined;
     override = (url, init) =>
-      url.pathname.endsWith("/prepare") && init?.method === "POST"
+      url.pathname.endsWith("/prepare") &&
+      !url.pathname.endsWith("/pricing/prepare") &&
+      init?.method === "POST"
         ? new Promise<Response>((resolve) => {
             finish = resolve;
           })
@@ -3005,7 +3050,8 @@ it("recovers an active visit's aborted save instead of treating it as owner loss
   renderWithClient(<App />);
   await ready();
   override = (url) =>
-    url.pathname.endsWith("/prepare")
+    url.pathname.endsWith("/prepare") &&
+    !url.pathname.endsWith("/pricing/prepare")
       ? Promise.reject(new DOMException("Network interrupted", "AbortError"))
       : undefined;
   click("Edit draft facts");

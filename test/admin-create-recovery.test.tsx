@@ -26,11 +26,19 @@ beforeEach(() => {
 });
 
 it.each([false, true])(
-  "keeps a lost creation response unresolved after successful reads (previous draft: %s)",
+  "recovers a lost creation response by its retained key (previous draft: %s)",
   async (hasPreviousDraft) => {
     const drafts: ProductDraft[] = hasPreviousDraft ? [draft()] : [];
     let creations = 0;
-    let listReads = 0;
+    let requestKey = "";
+    const recovered = draft({
+      id: otherId,
+      state: {
+        answers: { name: "Recovered conversation" },
+        history: [],
+        pendingQuestions: [],
+      },
+    });
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = new URL(String(input));
       if (url.pathname === "/categories") return Response.json(categories);
@@ -38,12 +46,18 @@ it.each([false, true])(
       if (url.pathname === "/admin/product-drafts") {
         if (init?.method === "POST") {
           creations++;
-          // The server committed, but the client cannot correlate this list
-          // entry with its lost POST response using the current API contract.
-          drafts.push(draft({ id: otherId }));
+          const body = JSON.parse(String(init.body));
+          requestKey = body.requestKey;
+          expect(
+            JSON.parse(
+              localStorage.getItem(
+                "lulu-admin-create-v1:https://api.luluspeedworks.com:admin",
+              ) ?? "null",
+            ),
+          ).toEqual(body);
+          drafts.push(recovered);
           throw new Error("Creation response lost");
         }
-        listReads++;
         return Response.json({
           drafts: drafts.map(
             ({
@@ -55,6 +69,8 @@ it.each([false, true])(
           ),
         });
       }
+      if (url.pathname === `/admin/product-drafts/by-request-key/${requestKey}`)
+        return Response.json(recovered);
       const saved = drafts.find(
         (item) => url.pathname === `/admin/product-drafts/${item.id}`,
       );
@@ -62,32 +78,19 @@ it.each([false, true])(
       return Response.json({ error: "Unexpected request" }, { status: 404 });
     });
     renderWithClient(<App />);
-    const create = await screen.findByRole("button", {
-      name: "+ New product",
-    });
+    const create = await screen.findByRole("button", { name: "+ New product" });
     if (hasPreviousDraft)
       await screen.findByRole("button", { name: "Edit draft facts" });
     fireEvent.click(create);
-    await waitFor(() => expect(creations).toBe(1));
-    await waitFor(() => {
-      expect(
-        screen.getByRole("status", { name: "Draft status" }),
-      ).toHaveTextContent(/creation.*unresolved|unresolved.*creation/i);
-    });
-    expect(create).toBeDisabled();
-    expect(
-      screen.getByRole("status", { name: "Draft status" }),
-    ).not.toHaveTextContent("Saved state has been reloaded");
-
-    fireEvent.click(screen.getByRole("button", { name: "Reload saved state" }));
-    await waitFor(() => expect(listReads).toBeGreaterThan(1));
-    await waitFor(() => {
-      expect(
-        screen.getByRole("status", { name: "Draft status" }),
-      ).toHaveTextContent(/creation.*unresolved|unresolved.*creation/i);
-    });
-    expect(create).toBeDisabled();
+    await screen.findByText("The original conversation has been recovered.");
+    await screen.findAllByText("Recovered conversation");
+    expect(create).toBeEnabled();
     expect(creations).toBe(1);
+    expect(
+      localStorage.getItem(
+        "lulu-admin-create-v1:https://api.luluspeedworks.com:admin",
+      ),
+    ).toBe("null");
   },
 );
 
@@ -142,7 +145,7 @@ it("recovers a failed dirty save before creation without claiming a creation was
 });
 
 it.each([401, 403, 503])(
-  "preserves authorization and creation uncertainty when recovery list fails (%s)",
+  "preserves authorization and creation uncertainty when correlated recovery fails (%s)",
   async (status) => {
     let lostResponse = false;
     let failList = true;
@@ -151,6 +154,11 @@ it.each([401, 403, 503])(
       const url = new URL(String(input));
       if (url.pathname === "/categories") return Response.json(categories);
       if (url.pathname === "/products") return Response.json(apiPage([1, 2]));
+      if (url.pathname.startsWith("/admin/product-drafts/by-request-key/"))
+        return Response.json(
+          { error: "Recovery unavailable" },
+          { status: failList ? status : 404 },
+        );
       if (url.pathname !== "/admin/product-drafts")
         return Response.json({ error: "Unexpected request" }, { status: 404 });
       if (init?.method === "POST") {
@@ -175,7 +183,7 @@ it.each([401, 403, 503])(
       fireEvent.click(
         screen.getByRole("button", { name: "Reload saved state" }),
       );
-      await screen.findByText(/Saved conversations have been reloaded/);
+      await screen.findByText(/No conversation was found for this request/);
       expect(
         screen.getByRole("button", { name: "+ New product" }),
       ).toBeDisabled();
@@ -261,5 +269,71 @@ it.each([false, true])(
       screen.queryByRole("button", { name: "Reload saved state" }),
     ).toBeNull();
     expect(writes).toBe(1);
+  },
+);
+
+it.each(["found", "retry", "retry lost", "discarded", "unavailable"])(
+  "resumes persisted creation through the workspace: %s",
+  async (outcome) => {
+    const key = "lulu-admin-create-v1:https://api.luluspeedworks.com:admin";
+    const stored = {
+      requestKey: "11111111-1111-4111-8111-111111111111",
+      target: { kind: "new" },
+    };
+    localStorage.setItem(key, JSON.stringify(stored));
+    const writes: unknown[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/categories") return Response.json(categories);
+      if (path === "/products") return Response.json(apiPage([1]));
+      if (path === "/admin/product-drafts" && init?.method === "POST") {
+        writes.push(JSON.parse(String(init.body)));
+        if (outcome === "retry lost") throw Error("Lost retry acknowledgement");
+        return Response.json(draft());
+      }
+      if (path === "/admin/product-drafts")
+        return Response.json({ drafts: [] });
+      if (path.includes("/by-request-key/"))
+        return outcome === "found" || writes.length > 0
+          ? Response.json(draft())
+          : Response.json(
+              {},
+              {
+                status: outcome.startsWith("retry")
+                  ? 404
+                  : outcome === "discarded"
+                    ? 410
+                    : 503,
+              },
+            );
+      return Response.json(draft());
+    });
+    renderWithClient(<App />);
+    const create = await screen.findByRole("button", { name: "+ New product" });
+    expect(create).toBeDisabled();
+    expect(writes).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Reload saved state" }));
+    if (outcome.startsWith("retry")) {
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: "Retry this conversation request",
+        }),
+      );
+      await screen.findByText("The original conversation has been recovered.");
+      expect(writes).toEqual([stored]);
+    } else if (outcome === "discarded")
+      await screen.findByText(
+        "That conversation was discarded. You can start a new one.",
+      );
+    else if (outcome === "found")
+      await screen.findByText("The original conversation has been recovered.");
+    else {
+      await screen.findByText(/Keep this request and check again/);
+      expect(create).toBeDisabled();
+      expect(localStorage.getItem(key)).toBe(JSON.stringify(stored));
+      return;
+    }
+    expect(create).toBeEnabled();
+    expect(localStorage.getItem(key)).toBe("null");
   },
 );

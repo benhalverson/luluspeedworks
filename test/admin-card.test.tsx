@@ -131,7 +131,7 @@ it.each(["create", "update", "delete"] as const)(
     const view = renderWithClient(<DraftCard view={card} onAction={action} />);
     const label = {
       create: "Create product",
-      update: "Update product",
+      update: "Save changes",
       delete: "Delete product",
     }[kind];
     expect(await screen.findByRole("button", { name: label })).toBeDisabled();
@@ -163,12 +163,10 @@ it.each(["create", "update", "delete"] as const)(
       );
     }
     if (kind === "delete") {
-      fireEvent.click(
-        screen.getByRole("button", { name: "Review product changes" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Cancel deletion" }));
       expect(action).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          name: "review",
+          name: "cancelDelete",
           context: { draftId, action: "update" },
         }),
       );
@@ -265,82 +263,6 @@ it("checks an unresolved operation only on explicit action and prevents repeated
   ).toBeDisabled();
 });
 
-it("opens management of a created product only on explicit action", async () => {
-  const action = vi.fn();
-  const card = mutationCard("create");
-  const mutation = {
-    action: "create" as const,
-    ready: false,
-    review: "Created part",
-    status: "Created successfully",
-    productId: 12,
-  };
-  const view = renderWithClient(
-    <DraftCard view={{ ...card, mutation }} onAction={action} />,
-  );
-  expect(
-    await screen.findByRole("button", { name: "Manage created product" }),
-  ).toBeEnabled();
-  expect(action).not.toHaveBeenCalled();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Manage created product" }),
-  );
-  expect(action).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      name: "manage",
-      context: { draftId, productId: 12 },
-    }),
-  );
-  view.rerender(
-    <DraftCard view={{ ...card, mutation, busy: true }} onAction={action} />,
-  );
-  expect(
-    screen.getByRole("button", { name: "Manage created product" }),
-  ).toBeDisabled();
-});
-
-it.each(["completed", "unresolved"] as const)(
-  "locks draft corrections and catalog actions for a %s operation",
-  async (state) => {
-    const action = vi.fn();
-    const card = mutationCard("update", true);
-    const view: CardView = {
-      ...card,
-      mutation: {
-        action: "update",
-        ready: true,
-        review: "Reviewed part",
-        status: state,
-        ...(state === "completed"
-          ? { completed: true, productId: 12 }
-          : { operationId: "operation-1" }),
-      },
-      confirmations: [{ name: "Parts", confirmed: false }],
-    };
-    renderWithClient(<DraftCard view={view} onAction={action} />);
-    expect(
-      await screen.findByRole("button", { name: "Update product" }),
-    ).toBeDisabled();
-    expect(screen.getByLabelText("Correct a detail")).toBeDisabled();
-    for (const name of [
-      "Save draft answers",
-      "Review product changes",
-      "Review product deletion",
-      "Confirm new category: Parts",
-    ])
-      expect(screen.getByRole("button", { name })).toBeDisabled();
-    expect(
-      screen.getByRole("button", {
-        name:
-          state === "completed"
-            ? "Manage created product"
-            : "Check product operation",
-      }),
-    ).toBeEnabled();
-    expect(action).not.toHaveBeenCalled();
-  },
-);
-
 it("keeps legacy cards preparation-only when catalog mutation evidence is absent", async () => {
   const action = vi.fn();
   const view: CardView = {
@@ -372,3 +294,101 @@ it("keeps legacy cards preparation-only when catalog mutation evidence is absent
     expect.objectContaining({ name: "save", context: { draftId } }),
   );
 });
+
+it.each(["https://api.lulu.test/photo.png", ""])(
+  "shows the exact deletion identity with image %s",
+  async (image) => {
+    const view = mutationCard("delete", true);
+    if (!view.mutation) throw Error("Expected mutation");
+    view.mutation = {
+      ...view.mutation,
+      deletion: { name: "Bracket A", image, sku: "SKU-42", productId: 42 },
+    };
+    renderWithClient(<DraftCard view={view} onAction={vi.fn()} />);
+    expect(
+      await screen.findByRole("region", { name: "Confirm product deletion" }),
+    ).toHaveTextContent("Delete Bracket A?");
+    expect(screen.getByText("Product #42 · SKU SKU-42")).toBeVisible();
+    if (image)
+      expect(screen.getByRole("img", { name: "Bracket A" })).toHaveAttribute(
+        "src",
+        image,
+      );
+    else expect(screen.getByText("Product image unavailable.")).toBeVisible();
+  },
+);
+
+it.each(["create", "update", "delete"] as const)(
+  "replaces completed %s controls with a concise summary and explicit remaining actions",
+  async (kind) => {
+    const onAction = vi.fn();
+    const view = mutationCard(kind);
+    if (!view.mutation) throw Error("Expected mutation");
+    view.mutation.finished = true;
+    view.mutation.operationId = "cleanup-operation";
+    renderWithClient(<DraftCard view={view} onAction={onAction} />);
+    expect(
+      await screen.findByRole("region", { name: "Product completion" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Product Card" })).toBeNull();
+    expect(screen.queryByLabelText("Correct a detail")).toBeNull();
+    if (kind === "update") {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Edit product details" }),
+      );
+      expect(onAction).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          name: "correction",
+          context: { draftId, field: "name" },
+        }),
+      );
+    }
+    fireEvent.click(
+      screen.getByRole("button", { name: "Check product operation" }),
+    );
+    expect(onAction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        name: "reconcile",
+        context: { draftId, operationId: "cleanup-operation" },
+      }),
+    );
+  },
+);
+
+it.each(["completed", "unresolved"] as const)(
+  "locks draft corrections and catalog actions for a %s operation",
+  async (state) => {
+    const action = vi.fn();
+    const card = mutationCard("update", true);
+    const view: CardView = {
+      ...card,
+      mutation: {
+        action: "update",
+        ready: true,
+        review: "Reviewed part",
+        status: state,
+        ...(state === "completed"
+          ? { completed: true }
+          : { operationId: "operation-1" }),
+      },
+      confirmations: [{ name: "Parts", confirmed: false }],
+    };
+    renderWithClient(<DraftCard view={view} onAction={action} />);
+    expect(
+      await screen.findByRole("button", { name: "Save changes" }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Correct a detail")).toBeDisabled();
+    for (const name of [
+      "Save draft answers",
+      "Review product changes",
+      "Review product deletion",
+      "Confirm new category: Parts",
+    ])
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    if (state === "unresolved")
+      expect(
+        screen.getByRole("button", { name: "Check product operation" }),
+      ).toBeEnabled();
+    expect(action).not.toHaveBeenCalled();
+  },
+);
