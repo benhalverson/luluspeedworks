@@ -5,8 +5,15 @@ import {
   selectFiles,
   transferFile,
 } from "../src/admin/attachments";
-import type { AttachmentTransfer, ProductDraft } from "../src/admin/contracts";
+import {
+  type AttachmentTransfer,
+  attachmentIntentSchema,
+  type ProductDraft,
+  productDraftContextSchema,
+  savedAttachmentSchema,
+} from "../src/admin/contracts";
 import { DraftRequestError, draftRequest } from "../src/admin/request";
+import { photo } from "./admin-fixtures";
 
 const draftId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const attachmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -595,3 +602,62 @@ it.each(["photo", "print"] as const)(
     expect(publish.mock.calls).toEqual([[pending]]);
   },
 );
+
+it.each([true, false])(
+  "accepts server-owned retained gallery metadata (managed: %s), but never as upload authority",
+  (managed) => {
+    const catalogSource = {
+      productId: 42,
+      url: "https://photos.example/retained.png",
+      managed,
+    };
+    const retained = photo({
+      size: 0,
+      contentType: managed ? "image/png" : "image/unknown",
+      catalogSource,
+    });
+    expect(savedAttachmentSchema.parse(retained)).toEqual(retained);
+    expect(
+      attachmentIntentSchema.safeParse({
+        expectedRevision: 1,
+        kind: "photo",
+        name: "replacement.png",
+        size: 8,
+        catalogSource,
+      }).success,
+    ).toBe(false);
+    expect(
+      savedAttachmentSchema.safeParse({
+        ...retained,
+        catalogSource: { ...catalogSource, ownerId: "forged" },
+      }).success,
+    ).toBe(false);
+  },
+);
+
+it("preserves the catalog gallery independently from its primary in validated context", () => {
+  const imageGallery = [
+    "https://photos.example/first.png",
+    "https://photos.example/primary.png",
+  ];
+  const parsed = productDraftContextSchema.parse({
+    status: "available",
+    product: {
+      id: 42,
+      name: "Part",
+      description: "Part",
+      image: imageGallery[1],
+      imageGallery,
+      price: 9,
+      filamentType: "PLA",
+      color: "Black",
+      skuNumber: null,
+      publicFileServiceId: null,
+    },
+    categories: [],
+  });
+  expect(parsed.status).toBe("available");
+  expect(parsed).toMatchObject({
+    product: { imageGallery, image: imageGallery[1] },
+  });
+});
