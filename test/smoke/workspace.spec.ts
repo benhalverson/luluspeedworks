@@ -264,9 +264,10 @@ test("keyboard category entry and complete instructions keep one review card wit
   await expect(card).toHaveCount(1);
   await expect(
     card.getByRole("button", { name: "Create product", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await expect(page.getByLabel("Product name", { exact: true })).toHaveCount(0);
   await expect(card).toContainText("Online markup: 50%");
   await expect(card).toContainText("In-person price: 2.50");
+  expect(api.requests.filter((value) => value.endsWith("/submit"))).toEqual([]);
   await checkLayout(page);
 });

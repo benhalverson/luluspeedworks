@@ -226,8 +226,8 @@ const mutationViewSchema = z.object({
   review: z.string(),
   status: z.string(),
   operationId: z.string().optional(),
-  productId: z.number().int().positive().optional(),
   completed: z.boolean().optional(),
+  finished: z.boolean().optional(),
   deletion: z
     .object({
       name: z.string(),
@@ -239,7 +239,7 @@ const mutationViewSchema = z.object({
 });
 const mutationLabels = {
   create: "Create product",
-  update: "Update product",
+  update: "Save changes",
   delete: "Delete product",
 };
 
@@ -269,6 +269,62 @@ const ProductCard = createComponentImplementation(
       props.busy ||
       Boolean(mutation?.completed) ||
       Boolean(mutation?.operationId);
+    if (mutation?.finished)
+      return (
+        <section
+          aria-label="Product completion"
+          className="my-6 rounded-lg border border-border bg-card p-4"
+        >
+          <h2 className="font-display text-2xl">{props.title}</h2>
+          <p role="status" className="my-3">
+            {mutation.status}
+          </p>
+          <p className="whitespace-pre-wrap text-sm">{mutation.review}</p>
+          {mutation.action === "delete" ? (
+            <p>
+              This product is unavailable. Start a new product or select another
+              conversation.
+            </p>
+          ) : (
+            <p>Continue below to discuss further changes to this product.</p>
+          )}
+          {mutation.action === "update" ? (
+            <Button
+              variant="outline"
+              disabled={props.busy}
+              onClick={() =>
+                void context.dispatchAction({
+                  event: {
+                    name: "correction",
+                    context: { draftId: props.draftId, field: "name" },
+                  },
+                })
+              }
+            >
+              Edit product details
+            </Button>
+          ) : null}
+          {mutation.operationId ? (
+            <Button
+              variant="outline"
+              disabled={props.busy}
+              onClick={() =>
+                void context.dispatchAction({
+                  event: {
+                    name: "reconcile",
+                    context: {
+                      draftId: props.draftId,
+                      operationId: mutation.operationId,
+                    },
+                  },
+                })
+              }
+            >
+              Check product operation
+            </Button>
+          ) : null}
+        </section>
+      );
     return (
       <section
         aria-label="Product Card"
@@ -459,25 +515,6 @@ const ProductCard = createComponentImplementation(
               >
                 {mutationLabels[mutation.action]}
               </Button>
-              {mutation.productId ? (
-                <Button
-                  variant="outline"
-                  disabled={props.busy}
-                  onClick={() =>
-                    void context.dispatchAction({
-                      event: {
-                        name: "manage",
-                        context: {
-                          draftId: props.draftId,
-                          productId: mutation.productId,
-                        },
-                      },
-                    })
-                  }
-                >
-                  Manage created product
-                </Button>
-              ) : null}
               {mutation.operationId ? (
                 <Button
                   variant="outline"
