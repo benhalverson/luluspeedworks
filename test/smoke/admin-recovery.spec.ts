@@ -1,3 +1,10 @@
+/**
+ * @file Exercises the production A2UI recovery flow against controlled HTTP outcomes.
+ * Playwright owns each test's response map and request history outside the page,
+ * so reload discards UI state while retaining the mocked operation evidence.
+ * This isolates browser recovery behavior without running an API or proving
+ * provider effects or database persistence.
+ */
 import { draft, draftId } from "../admin-fixtures";
 import {
   mutationResult,
@@ -114,6 +121,11 @@ for (const action of ["create", "update", "delete"] as const) {
 }
 
 for (const action of ["create", "update", "delete"] as const) {
+  /**
+   * Resume an already failed operation to check that viewing it cannot retry it.
+   * The saved response supplies failure authority; backend error classification
+   * is covered separately by the companion endpoint tests.
+   */
   test(`mocked ${action} retains a terminal Square rejection across reload without retry`, async ({
     page,
     api,
@@ -187,6 +199,11 @@ for (const action of ["create", "update", "delete"] as const) {
         : {},
     );
     if (!completed.operation) throw Error("Expected operation fixture");
+    /**
+     * Script only the public operation states that an explicit check can advance.
+     * Repeating repair_required verifies that another retry need not mean success;
+     * deletion skips photo synchronization because it does not publish an image.
+     */
     const stages = (
       [
         ["pending", "Square synchronization is pending."],
@@ -215,6 +232,12 @@ for (const action of ["create", "update", "delete"] as const) {
     api.responses.set(`GET ${root}/preparation`, {
       body: { preparation: prepared },
     });
+    /**
+     * These per-test ledgers outlive page reload and capture the real UI's POST bodies.
+     * The handlers also replace the operation GET response, so a fresh page reads
+     * the latest mocked operation state. Only reconciliation advances the script;
+     * a reload must neither create a new submission nor advance that sequence.
+     */
     const submissions: unknown[] = [];
     const reconciliations: unknown[] = [];
     await page.route(`https://api.lulu.test${root}/submit`, async (route) => {
