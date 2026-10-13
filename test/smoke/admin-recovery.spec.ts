@@ -206,14 +206,21 @@ for (const action of ["create", "update", "delete"] as const) {
      */
     const stages = (
       [
-        ["pending", "Square synchronization is pending."],
+        [
+          "pending",
+          action === "delete"
+            ? "Square unpublication is pending."
+            : "Square synchronization is pending.",
+        ],
         [
           "item_confirmed",
           "Square item confirmed. Photo synchronization is pending.",
         ],
         [
           "square_confirmed",
-          "Square confirmed. Local catalog save is pending.",
+          action === "delete"
+            ? "Square unpublished. Local product deletion is pending."
+            : "Square confirmed. Local catalog save is pending.",
         ],
         ["repair_required", "The saved operation needs repair."],
         ["repair_required", "The saved operation needs repair."],
