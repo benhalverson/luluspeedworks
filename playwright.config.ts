@@ -15,19 +15,44 @@ export default defineConfig({
   ],
   use: {
     baseURL: "http://127.0.0.1:4173",
-    browserName: "chromium",
-    launchOptions: {
-      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-    },
     serviceWorkers: "block",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
   projects: [
-    { name: "desktop", use: { viewport: { width: 1440, height: 1000 } } },
+    {
+      name: "desktop",
+      use: {
+        browserName: "chromium",
+        launchOptions: {
+          executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+        },
+        viewport: { width: 1440, height: 1000 },
+      },
+    },
     {
       name: "mobile",
       use: {
+        browserName: "chromium",
+        launchOptions: {
+          executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+        },
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
+        hasTouch: true,
+      },
+    },
+    {
+      name: "webkit-desktop",
+      use: {
+        browserName: "webkit",
+        viewport: { width: 1440, height: 1000 },
+      },
+    },
+    {
+      name: "webkit-mobile",
+      use: {
+        browserName: "webkit",
         viewport: { width: 390, height: 844 },
         isMobile: true,
         hasTouch: true,

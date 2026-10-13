@@ -6,7 +6,7 @@ for (const reason of [
   "budget_exhausted",
   "accounting_unavailable",
 ]) {
-  test(`shopping requests preserve ${reason === "inference_unavailable" ? "A2UI browsing and bag" : "shopping through checkout review"} after ${reason}`, async ({
+  test(`shopping requests preserve shopping through checkout review after ${reason}`, async ({
     page,
     api,
   }) => {
@@ -133,7 +133,6 @@ for (const reason of [
         ),
       ),
     ).toBe(false);
-    if (reason === "inference_unavailable") return;
 
     const filamentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const quoteId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";

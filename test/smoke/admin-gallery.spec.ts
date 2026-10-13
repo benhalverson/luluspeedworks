@@ -1,3 +1,5 @@
+import { once } from "node:events";
+import { createServer } from "node:http";
 import {
   draft,
   draftId,
@@ -6,15 +8,86 @@ import {
   photoId,
   transfer,
 } from "../admin-fixtures";
-import { checkLayout, draftList, expect, test } from "./fixtures";
+import { test as base, checkLayout, draftList, expect } from "./fixtures";
+
+// WebKit's intercepted request omits File bytes. Receive them over loopback so
+// every browser verifies the actual upload body at the same mocked boundary.
+const test = base.extend<{
+  upload: {
+    origin: string;
+    receive: (id: string, method: string | undefined, body: Buffer) => unknown;
+  };
+}>({
+  upload: async ({ page }, use) => {
+    const errors: unknown[] = [];
+    const upload = {
+      origin: "",
+      receive: (_id: string, _method: string | undefined, _body: Buffer) => {
+        throw Error("Unexpected mock upload");
+      },
+    };
+    const server = createServer(async (request, response) => {
+      response.setHeader(
+        "Access-Control-Allow-Origin",
+        "http://127.0.0.1:4173",
+      );
+      response.setHeader("Access-Control-Allow-Methods", "PUT, OPTIONS");
+      response.setHeader("Access-Control-Allow-Headers", "content-type");
+      response.setHeader("Access-Control-Allow-Credentials", "true");
+      if (request.method === "OPTIONS") {
+        response.writeHead(204).end();
+        return;
+      }
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const id = request.url?.split("/").at(-1) ?? "";
+        const result = upload.receive(
+          id,
+          request.method,
+          Buffer.concat(chunks),
+        );
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify(result));
+      } catch (error) {
+        errors.push(error);
+        response.writeHead(500).end();
+      }
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw Error("No upload port");
+      upload.origin = `http://127.0.0.1:${address.port}`;
+      await page.route(`${upload.origin}/mock-upload/*`, (route) =>
+        route.continue(),
+      );
+      await use(upload);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+    expect(errors, "Mock upload receiver errors").toEqual([]);
+  },
+});
 
 const image =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4AWJ6tVXjPwgzMUABAAAA//8Lw1LcAAAABklEQVQDAEt4BZFa6totAAAAAElFTkSuQmCC";
 test("mocked retained gallery supports keyboard order, primary, add, replace, remove and print reload", async ({
   page,
   api,
+  upload,
 }) => {
   const root = `/admin/product-drafts/${draftId}`;
+  const files = new Map([
+    ["added.png", Buffer.from("mock photo")],
+    ["replacement.png", Buffer.from("mock replacement")],
+    ["updated.stl", Buffer.from("solid mock\nendsolid mock")],
+  ]);
   const saved = draft({
     target: { kind: "existing", productId: 42 },
     context: {
@@ -93,7 +166,7 @@ test("mocked retained gallery supports keyboard order, primary, add, replace, re
               id,
               upload: {
                 method: "PUT",
-                url: `https://api.lulu.test/mock-upload/${id}`,
+                url: `${upload.origin}/mock-upload/${id}`,
                 headers: {},
               },
             },
@@ -120,12 +193,12 @@ test("mocked retained gallery supports keyboard order, primary, add, replace, re
       await route.fulfill({ json: { draft: saved } });
     },
   );
-  await page.route("https://api.lulu.test/mock-upload/*", async (route) => {
-    const id = new URL(route.request().url()).pathname.split("/").at(-1) ?? "";
+  upload.receive = (id, method, body) => {
     const input = uploads.get(id);
     if (!input) throw Error("Unknown mock upload");
-    expect(route.request().method()).toBe("PUT");
-    expect(route.request().postDataBuffer()?.length).toBe(input.size);
+    expect(method).toBe("PUT");
+    expect(body.length).toBe(input.size);
+    expect(body).toEqual(files.get(input.name));
     const file = photo({
       id,
       assetId: id,
@@ -155,10 +228,8 @@ test("mocked retained gallery supports keyboard order, primary, add, replace, re
     pending.status = "saved";
     saved.revision++;
     publish();
-    await route.fulfill({
-      json: input.kind === "photo" ? { draft: saved } : {},
-    });
-  });
+    return input.kind === "photo" ? { draft: saved } : {};
+  };
   await page.goto("/admin/products");
   await page.getByRole("button", { name: "Edit draft facts" }).click();
   const list = page.getByRole("list", { name: "Draft attachments" });
@@ -203,7 +274,12 @@ test("mocked retained gallery supports keyboard order, primary, add, replace, re
     mimeType: "application/octet-stream",
     buffer: Buffer.from("solid mock\nendsolid mock"),
   });
-  await expect(list).toContainText("updated.stl");
+  await expect(
+    row("updated.stl").getByText("Saved", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    row("updated.stl").getByRole("button", { name: "Replace", exact: true }),
+  ).toBeEnabled();
   await page.reload();
   await page.getByRole("button", { name: "Edit draft facts" }).click();
   await expect(row("added.png")).toContainText("Primary photo");

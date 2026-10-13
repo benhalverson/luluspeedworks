@@ -46,26 +46,26 @@ Lulu exposes password authentication; passkey controls appear only on the API’
 | `pnpm test:coverage` | Enforce 100% statements, branches, functions and lines per file and globally |
 | `pnpm build` | Build static frontend assets into `dist/` |
 | `pnpm check` | Run Biome, type checking, coverage and build |
-| `pnpm test:smoke` | Build and test production assets with controlled API responses in Chromium |
+| `pnpm test:smoke` | Build and test production assets with controlled API responses in Chromium and WebKit |
 
 Runtime TypeScript/TSX coverage includes unimported application files, the entrypoint and local UI controls. Tests live outside `src`. GitHub Actions runs `pnpm check` (including local-link checks) and `pnpm test:smoke` for PRs and pushes to `main`, installing the frozen lockfile without production secrets.
 
 ## Production browser smoke checks
 
-Install the pinned runner's browser once, then run the command:
+Install the pinned runner's browsers once, then run the command:
 
 ```sh
-pnpm exec playwright install chromium
+pnpm exec playwright install chromium webkit
 pnpm test:smoke
 ```
 
-On Linux CI, `pnpm exec playwright install --with-deps chromium` also installs system dependencies. [CI](.github/workflows/check.yml) uses this setup.
+On Linux CI, `pnpm exec playwright install --with-deps chromium webkit` also installs system dependencies. [CI](.github/workflows/check.yml) uses this setup.
 
-The runner builds into ignored `dist-smoke/`, pins the test API origin to `https://api.lulu.test`, and serves production assets at `http://127.0.0.1:4173`. API responses are controlled in browser tests; unhandled external requests fail the run. It refuses to reuse another server on that port. Playwright owns preview startup and teardown; intentional shutdown is normal cleanup, while test/startup failures retain a failing exit status.
+The runner builds into ignored `dist-smoke/`, pins the test API origin to `https://api.lulu.test`, and serves production assets at `http://127.0.0.1:4173`. API responses are controlled in browser tests; unhandled external requests fail the run. The admin gallery fixture receives file bytes through a test-owned loopback HTTP server with an ephemeral port; storage/provider outcomes remain mocked. The preview refuses to reuse another server on its port. Playwright owns server startup and teardown; intentional shutdown is normal cleanup, while test/startup failures retain a failing exit status.
 
-Desktop (1440px) and mobile (390px) cases cover account/bag dialogs, shared logo loading, keyboard focus, page overflow, unexpected console errors, detail/save denial, delayed saves and authorization retry. These exercise the bundled React/A2UI/auth client with mocked API responses. They do not verify backend authorization enforcement, provider storage or live commerce.
+All scenarios run in four projects: Chromium `desktop` and `mobile`, and `webkit-desktop` and `webkit-mobile`. Each engine uses desktop (1440px) and mobile (390px, touch enabled) viewports. Cases cover account/bag dialogs, shared logo loading, keyboard focus, page overflow, unexpected console errors, detail/save denial, delayed saves and authorization retry. Inference, budget and accounting fallbacks each continue through deterministic product selection, bag updates and a fresh authoritative checkout review without another model request. These exercise the bundled React/A2UI/auth client with mocked API responses. They do not verify backend authorization enforcement, provider storage, native API cookies, actual Safari/iOS devices or live commerce. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`, when set locally, overrides only the Chromium executable; WebKit uses the pinned runner's installation.
 
-Logs are retained in `artifacts/smoke/server.log`; the HTML report is in `artifacts/smoke/report/`, and failing tests retain screenshots and traces in `artifacts/smoke/results/`. CI uploads `artifacts/smoke/` even when the job fails. All artifacts are ignored by Git. To focus on a scenario, use `pnpm test:smoke --project=mobile -g 'delayed save'`.
+Logs are retained in `artifacts/smoke/server.log`; the HTML report is in `artifacts/smoke/report/`, and failing tests retain screenshots and traces in `artifacts/smoke/results/`. CI uploads `artifacts/smoke/` even when the job fails. All artifacts are ignored by Git. To focus on a scenario, use `pnpm test:smoke --project=webkit-mobile -g 'delayed save'`.
 
 ## Source map
 
@@ -142,6 +142,27 @@ Partial evidence supports only that state. Saving a private draft does not prove
 [wrangler.jsonc](wrangler.jsonc) serves static `dist/` assets with SPA fallback. Product, account, recovery and admin routes resolve through [App.tsx](src/App.tsx); unknown routes fall back to the storefront. This repository has no custom Worker request handler.
 
 After building, `pnpm exec wrangler dev --local` can preview the static hosting configuration, and `pnpm exec wrangler deploy --dry-run` validates packaging without publishing. Actual deployment and domain configuration are outside #13. No backend credentials or bindings are configured. Future endpoint work belongs on a dedicated branch in `3dprinter-web-api`; reuse its existing health endpoint.
+
+### Launch configuration and operations
+
+[Launch issue #12](https://github.com/benhalverson/luluspeedworks/issues/12) remains open until the approved content and integration gates have been verified. Passing the controlled browser matrix does not close those gates. Keep the release commit, CI run, target environment and actual outcomes in the release handoff, using the delivery states above.
+
+| Area and owner | Required value or acceptance before release |
+| --- | --- |
+| Store owner: launch content | Approve published product IDs, photos, prices, fit descriptions and store policy copy. The historical assortment is not a list of guaranteed SKUs. Preserve unknown fit/policy facts; exclude customer uploads, material selection, masks and branded gear from customer shopping. |
+| Release operator: static host | Confirm the Cloudflare account, Worker `luluspeedworks`, target domain/certificate, deployment mechanism and previous working version. The checked-in config serves `dist/` with SPA fallback; it does not declare a custom domain or a staging environment. This repository's Check workflow validates changes and does not deploy them. |
+| Release operator: API destination | Record the build-time public `VITE_API_ORIGIN` (default `https://api.luluspeedworks.com`) and matching API revision. Select a non-production API for integration; an arbitrary preview hostname does not establish isolated provider/storage resources. |
+| API owner: identity | Verify trusted origins, credentialed CORS, cookie retention/expiry, reset-email receipt, guest bag claim and cross-user isolation in Chromium/WebKit against the selected API. Link [#4](https://github.com/benhalverson/luluspeedworks/issues/4) acceptance, including private-response cache behavior. |
+| API owner: checkout and agent | Link actual quote/charge/order-total and durable payment-correlation acceptance for [#6](https://github.com/benhalverson/luluspeedworks/issues/6), and measured agent validation for [#8](https://github.com/benhalverson/luluspeedworks/issues/8) / [#11](https://github.com/benhalverson/luluspeedworks/issues/11). Provider redirects alone never establish payment. |
+| Store/API owners: inference operations | Select verified sender/owner-recipient addresses and verify receipt plus durable retry for [#10](https://github.com/benhalverson/luluspeedworks/issues/10) / [API #193](https://github.com/benhalverson/3dprinter-farm/issues/193). Record the deployed ledger, $20 USD UTC-month allowance, model/price version, limits and observability access. Keep inference disabled until these gates pass. |
+
+Approved launch content/policies, the integration environment and email addresses remain owner inputs. Live email, payment, agent and deployed hosting outcomes require their own evidence; no values or successful outcomes are inferred from fixtures. Production deployment, domain changes and real paid transactions require separate authorization.
+
+Before an authorized rollout, run `pnpm check`, the complete `pnpm test:smoke` matrix and `pnpm exec wrangler deploy --dry-run`. Confirm the chosen account and target before any remote command. Inspect `pnpm exec wrangler deployments list --name luluspeedworks` and `pnpm exec wrangler versions view VERSION_ID --name luluspeedworks` to identify and record the previous working version, its source commit and API compatibility. Replace `VERSION_ID` with the inspected version ID; these are operator instructions, not checks performed by CI.
+
+If an authorized rollout breaks customer flows, an authorized operator can restore that recorded version with `pnpm exec wrangler rollback VERSION_ID --name luluspeedworks --message 'Restore verified storefront version'`. For a separately configured named environment, use the same `--env` on every inspection and rollback command. A [Cloudflare rollback](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/) immediately changes the active deployment; it does not undo API data, orders, payments or connected resource changes. Verify compatibility before rollback and handle any commerce recovery through the API's existing operations.
+
+After rollout or rollback, record the active version and check the target-domain homepage, a product deep link/reload, logo/assets, account/cookie behavior, keyboard/mobile layout and deterministic browsing with inference disabled. Run approved account/cart/checkout checks only in the selected integration environment. Check frontend/API failures, pending payment recovery and inference fallback/budget signals through the operator's configured observability. A failed critical identity or checkout gate keeps the release unapproved.
 
 ## Scope and references
 

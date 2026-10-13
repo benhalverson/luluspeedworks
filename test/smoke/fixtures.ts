@@ -27,7 +27,7 @@ export const test = base.extend<{
     expectedNetworkErrors: Map<string, string>;
   };
 }>({
-  api: async ({ page }, use) => {
+  api: async ({ page, browserName }, use) => {
     const responses = new Map<string, Reply | Promise<Reply>>();
     const requests: string[] = [];
     const errors: string[] = [];
@@ -53,6 +53,14 @@ export const test = base.extend<{
     ];
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
+      if (browserName === "webkit" && message.type() === "info") {
+        for (const url of expectedNetworkErrors.keys()) {
+          if (message.text() === `Web Inspector blocked ${url} from loading`) {
+            expectedNetworkErrors.delete(url);
+            return;
+          }
+        }
+      }
       if (message.type() !== "error") return;
       if (
         expectedNetworkErrors.get(message.location().url) === message.text()
