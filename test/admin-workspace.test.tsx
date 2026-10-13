@@ -1965,7 +1965,7 @@ it("shows current product context, print controls and authoritative validation",
   ];
   renderWithClient(<App />);
   await screen.findByRole("heading", { level: 1, name: "Current tray" });
-  expect(screen.getByText("Choose a color")).toBeVisible();
+  expect(await screen.findByText("Choose a color")).toBeVisible();
   click("Replace");
   expect(
     screen.getByLabelText("Replacement / reselected print file"),
@@ -2421,6 +2421,7 @@ it("keeps listings with missing previews identifiable and permits leaving while 
               description: "No preview",
               price: 1,
               image: null,
+              categories: [],
             },
           ],
         })
@@ -2749,13 +2750,26 @@ it("retains authoritative existing facts and current price while missing legacy 
   expect(requests.every((request) => request.method === "GET")).toBe(true);
 });
 
-it("resolves category names by explicitly selecting an authoritative existing identity", async () => {
+it("waits for catalog membership before explicitly selecting an authoritative existing identity", async () => {
+  let resolveCatalog: ((response: Response) => void) | undefined;
+  const pendingCatalog = new Promise<Response>((resolve) => {
+    resolveCatalog = resolve;
+  });
+  override = (url) =>
+    url.pathname === "/products" ? pendingCatalog : undefined;
   renderWithClient(<App />);
   await ready();
   click("Edit draft facts");
   fireEvent.change(screen.getByLabelText("Correct a detail"), {
     target: { value: "categoryIds" },
   });
+  expect((await screen.findByLabelText("Existing categories")).tagName).toBe(
+    "INPUT",
+  );
+  expect(screen.queryByRole("option", { name: "RC Parts (#1)" })).toBeNull();
+  await act(async () =>
+    required(resolveCatalog)(Response.json(apiPage([1, 2]))),
+  );
   await waitFor(() =>
     expect(screen.getByLabelText("Existing categories").tagName).toBe("SELECT"),
   );

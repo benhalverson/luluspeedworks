@@ -15,7 +15,7 @@ it.each([
     vi.mocked(fetch).mockImplementation(async (input) => {
       const path = new URL(String(input)).pathname;
       if (path === "/categories") return Response.json(membership);
-      if (path === "/products") return Response.json(apiPage([1]));
+      if (path === "/products") return Response.json(apiPage([1], 1, 1, []));
       return Response.json({ id: 1, categories: [] });
     });
     render(<App />);
@@ -76,11 +76,12 @@ it("shows missing and broken image fallbacks", async () => {
     .mockResolvedValueOnce(
       Response.json({
         ...apiPage([1, 2]),
-        products: [product(), { ...product(2), image: null }],
+        products: [
+          { ...product(), categories },
+          { ...product(2), image: null, categories },
+        ],
       }),
-    )
-    .mockResolvedValueOnce(Response.json({ id: 1, categories }))
-    .mockResolvedValueOnce(Response.json({ id: 2, categories }));
+    );
   render(<App />);
   const image = await screen.findByRole("img", { name: "Part 1" });
   expect(screen.getAllByText("Image unavailable")).toHaveLength(1);
@@ -94,8 +95,7 @@ it("shows missing and broken image fallbacks", async () => {
 it("distinguishes unavailable mappings from an empty category and permits retry", async () => {
   vi.mocked(fetch)
     .mockResolvedValueOnce(Response.json([categories[1]]))
-    .mockResolvedValueOnce(Response.json(apiPage([1])))
-    .mockResolvedValueOnce(Response.json({ id: 1, categories: [] }));
+    .mockResolvedValueOnce(Response.json(apiPage([1], 1, 1, [])));
   render(<App />);
   await screen.findByText("Part 1");
   expect(
