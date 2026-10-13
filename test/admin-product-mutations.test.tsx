@@ -1036,48 +1036,76 @@ it.each(["create", "delete"] as const)(
   },
 );
 
-it("retains current catalog markup while reviewing an unrelated existing product correction", async () => {
-  saved = draft({
-    target: { kind: "existing", productId: 42 },
-    context: {
-      status: "available",
-      product: {
-        id: 42,
-        name: "Current part",
-        description: "Current description",
-        image: null,
-        price: 15,
-        markupPercentage: 50,
-        filamentType: "PLA",
-        color: "Red",
-        skuNumber: null,
-        publicFileServiceId: "file-42",
+it.each([undefined, ""])(
+  "retains unchanged catalog fields and saved description override %s while reviewing a name correction",
+  async (description) => {
+    saved = draft({
+      target: { kind: "existing", productId: 42 },
+      context: {
+        status: "available",
+        product: {
+          id: 42,
+          name: "Current part",
+          description: "Current description",
+          image: null,
+          price: 15,
+          markupPercentage: 50,
+          inPersonPrice: 12.75,
+          filamentType: "PLA",
+          color: "Red",
+          skuNumber: null,
+          publicFileServiceId: "file-42",
+        },
+        categories,
       },
-      categories: [],
-    },
-  });
-  renderWithClient(<App />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Edit draft facts" }),
-  );
-  fireEvent.change(screen.getByLabelText("Correct a detail"), {
-    target: { value: "markupPercentage" },
-  });
-  expect(screen.getByLabelText("Online markup percentage")).toHaveValue("50");
-  fireEvent.change(screen.getByLabelText("Correct a detail"), {
-    target: { value: "name" },
-  });
-  fireEvent.change(screen.getByLabelText("Product name"), {
-    target: { value: "Corrected part name" },
-  });
-  fireEvent.click(await review());
-  await waitFor(() => expect(submit("update")).toBeEnabled());
-  expect(writes()[0]?.body.answers).toMatchObject({
-    name: "Corrected part name",
-    markupPercentage: "50",
-  });
-  expect(writes()[1]?.body).toEqual({ expectedRevision: 2, action: "update" });
-});
+      state: {
+        answers: description === undefined ? {} : { description },
+        pendingQuestions: [],
+        history: [],
+      },
+    });
+    renderWithClient(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit draft facts" }),
+    );
+    fireEvent.change(screen.getByLabelText("Correct a detail"), {
+      target: { value: "markupPercentage" },
+    });
+    expect(screen.getByLabelText("Online markup percentage")).toHaveValue("50");
+    fireEvent.change(screen.getByLabelText("Correct a detail"), {
+      target: { value: "name" },
+    });
+    fireEvent.change(screen.getByLabelText("Product name"), {
+      target: { value: "Corrected part name" },
+    });
+    expect(writes()).toEqual([]);
+    fireEvent.click(await review());
+    await waitFor(() => expect(submit("update")).toBeEnabled());
+    expect(writes()).toEqual([
+      {
+        path: `/${draftId}/prepare`,
+        method: "POST",
+        body: {
+          expectedRevision: 1,
+          answers: {
+            name: "Corrected part name",
+            description: description ?? "Current description",
+            markupPercentage: "50",
+            inPersonPrice: "12.75",
+            filamentType: "PLA",
+            color: "Red",
+            categoryIds: [1, 2],
+          },
+        },
+      },
+      {
+        path: `/${draftId}/pricing/prepare`,
+        method: "POST",
+        body: { expectedRevision: 2, action: "update" },
+      },
+    ]);
+  },
+);
 
 it("keeps reconciliation unresolved when HTTP success returns another operation", async () => {
   const result = mutationResult();
