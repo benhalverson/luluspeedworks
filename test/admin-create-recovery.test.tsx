@@ -1,4 +1,10 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 import type { ProductDraft } from "../src/admin/contracts";
@@ -143,6 +149,173 @@ it("recovers a failed dirty save before creation without claiming a creation was
   expect(saves).toBe(1);
   expect(creations).toBe(0);
 });
+
+it.each(["acknowledged", "lost"])(
+  "retains saved answers and an unsent note when the following creation response is %s",
+  async (outcome) => {
+    const previous = draft({
+      revision: 3,
+      state: {
+        answers: { name: "Draft A", description: "Already saved description" },
+        history: [],
+        pendingQuestions: [],
+      },
+    });
+    const created = draft({ id: otherId });
+    const persisted = [previous];
+    const writes: { path: string; body: unknown }[] = [];
+    const recoveryKeys: string[] = [];
+    let oldReads = 0;
+    let requestKey = "";
+    let allowRecovery = false;
+    let acknowledgeSave!: (response: Response) => void;
+    const saveResponse = new Promise<Response>((resolve) => {
+      acknowledgeSave = resolve;
+    });
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/categories") return Response.json(categories);
+      if (path === "/products") return Response.json(apiPage([1, 2]));
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        writes.push({ path, body });
+        if (path === `/admin/product-drafts/${previous.id}/prepare`)
+          return saveResponse;
+        if (path === "/admin/product-drafts") {
+          requestKey = body.requestKey;
+          persisted.push(created);
+          if (outcome === "lost") throw Error("Creation response lost");
+          return Response.json(created);
+        }
+      }
+      if (path === "/admin/product-drafts")
+        return Response.json({
+          drafts: persisted.map(
+            ({
+              state: _state,
+              context: _context,
+              attachments: _attachments,
+              ...summary
+            }) => summary,
+          ),
+        });
+      if (path.startsWith("/admin/product-drafts/by-request-key/")) {
+        recoveryKeys.push(path.split("/").at(-1) ?? "");
+        return allowRecovery
+          ? Response.json(created)
+          : Response.json({ error: "Lookup unavailable" }, { status: 503 });
+      }
+      if (path.endsWith("/preparation"))
+        return Response.json({ preparation: null });
+      if (path.endsWith("/operation"))
+        return Response.json({
+          operation: null,
+          product: null,
+          readiness: null,
+          storefrontVisible: false,
+        });
+      const saved = persisted.find(
+        (item) => path === `/admin/product-drafts/${item.id}`,
+      );
+      if (saved) {
+        if (saved.id === previous.id) oldReads++;
+        return Response.json(saved);
+      }
+      return Response.json({ error: "Unexpected request" }, { status: 404 });
+    });
+    renderWithClient(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit draft facts" }),
+    );
+    const card = within(screen.getByRole("region", { name: "Product Card" }));
+    fireEvent.change(card.getByLabelText("Product name"), {
+      target: { value: "Acknowledged draft A" },
+    });
+    fireEvent.change(screen.getByLabelText("Product notes"), {
+      target: { value: "Unsent note for A" },
+    });
+    const create = screen.getByRole("button", { name: "+ New product" });
+    fireEvent.click(create);
+    const save = {
+      path: `/admin/product-drafts/${previous.id}/prepare`,
+      body: {
+        expectedRevision: 3,
+        answers: {
+          name: "Acknowledged draft A",
+          description: "Already saved description",
+        },
+      },
+    };
+    await waitFor(() => expect(writes).toEqual([save]));
+    expect(create).toBeDisabled();
+    expect(persisted).toHaveLength(1);
+    previous.revision++;
+    previous.state.answers = save.body.answers;
+    await act(() => acknowledgeSave(Response.json(previous)));
+
+    if (outcome === "lost") {
+      await screen.findByText(/The creation outcome is unresolved/);
+      expect(create).toBeDisabled();
+      fireEvent.click(create);
+      expect(writes).toHaveLength(2);
+      expect(
+        screen.getByRole("status", { name: "Draft status" }),
+      ).not.toHaveTextContent("Saved state has been reloaded");
+      expect(screen.getByLabelText("Product notes")).toHaveValue(
+        "Unsent note for A",
+      );
+      allowRecovery = true;
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reload saved state" }),
+      );
+      await screen.findByText("The original conversation has been recovered.");
+    }
+    await waitFor(() => expect(create).toBeEnabled());
+    expect(requestKey).toMatch(/^[0-9a-f-]{36}$/);
+    expect(writes).toEqual([
+      save,
+      {
+        path: "/admin/product-drafts",
+        body: { requestKey, target: { kind: "new" } },
+      },
+    ]);
+    expect(recoveryKeys).toEqual(
+      outcome === "lost" ? [requestKey, requestKey] : [],
+    );
+    expect(oldReads).toBe(1);
+    expect(persisted).toHaveLength(2);
+    expect(
+      localStorage.getItem(
+        "lulu-admin-draft:https://api.luluspeedworks.com:admin",
+      ),
+    ).toBe(JSON.stringify(otherId));
+    expect(screen.getByLabelText("Product name")).toHaveValue("");
+    expect(screen.getByLabelText("Product notes")).toHaveValue("");
+    const recent = within(
+      screen.getByRole("complementary", { name: "Recent conversations" }),
+    );
+    expect(
+      recent.getByRole("button", { name: /New product/, pressed: true }),
+    ).toBeEnabled();
+    fireEvent.click(
+      recent.getByRole("button", { name: /New product/, pressed: false }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit draft facts" }),
+    );
+    expect(
+      within(
+        screen.getByRole("region", { name: "Product Card" }),
+      ).getByLabelText("Product name"),
+    ).toHaveValue("Acknowledged draft A");
+    expect(screen.getByLabelText("Product notes")).toHaveValue(
+      "Unsent note for A",
+    );
+    expect(previous.state.answers).toEqual(save.body.answers);
+    expect(previous.state.history).toEqual([]);
+    expect(writes).toHaveLength(2);
+  },
+);
 
 it.each([401, 403, 503])(
   "preserves authorization and creation uncertainty when correlated recovery fails (%s)",
