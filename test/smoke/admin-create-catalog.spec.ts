@@ -1,3 +1,4 @@
+import type { ProductPage } from "../../src/storefront/api";
 import {
   draft,
   draftId,
@@ -77,8 +78,12 @@ test("mocked product creation refreshes authoritative prices and the selected pr
     inPersonPrice: 12.25,
   };
   result.product = product;
-  const catalogPage = (created: boolean) => ({
-    products: created ? [product] : [],
+  const catalogProduct = {
+    ...product,
+    categories: [{ categoryId: 1, categoryName: "RC Parts" }],
+  };
+  const catalogPage = (created: boolean): ProductPage => ({
+    products: created ? [catalogProduct] : [],
     pagination: {
       page: 1,
       limit: 100,
