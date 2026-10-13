@@ -20,56 +20,93 @@ const verifiedSession = {
   },
 };
 
-test("password sign-in claims the selected guest bag for the verified account and resumes the local destination", async ({
-  page,
-  api,
-}) => {
-  api.responses.set("GET /api/auth/get-session", { body: null });
-  api.responses.set(`GET /cart/${cartId}`, { body: { items: [], total: 0 } });
-  api.responses.set(`POST /cart/${cartId}/claim`, {
-    body: { message: "Cart claimed", ownerId: user.id },
+for (const destination of ["/products/1", "/cart", "/cart/"]) {
+  test(`password sign-in claims the selected guest bag and resumes ${destination}`, async ({
+    page,
+    api,
+  }) => {
+    api.responses.set("GET /api/auth/get-session", { body: null });
+    api.responses.set(`GET /cart/${cartId}`, {
+      body: {
+        items: [
+          {
+            id: 91,
+            productId: "SMOKE-1",
+            quantity: 1,
+            color: "red",
+            filamentType: "PLA",
+            filamentId: "76fe1f79-3f1e-43e4-b8f4-61159de5b93c",
+            name: "Retained guest part",
+            price: 2.29,
+          },
+        ],
+        total: 2.29,
+      },
+    });
+    api.responses.set(`POST /cart/${cartId}/claim`, {
+      body: { message: "Cart claimed", ownerId: user.id },
+    });
+    api.responses.set("GET /v2/colors", { body: { success: true, data: [] } });
+    await page.addInitScript(
+      ({ key, id }) => {
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            cartId: id,
+            guestToken: id,
+            ownerId: null,
+            pending: false,
+            revision: crypto.randomUUID(),
+          }),
+        );
+      },
+      { key: storageKey, id: cartId },
+    );
+    await page.goto(`/signin?returnTo=${encodeURIComponent(destination)}`);
+    await page.getByLabel("Email", { exact: true }).fill(user.email);
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill("controlled smoke password");
+    api.responses.set("POST /api/auth/sign-in/email", {
+      body: { user, token: "fixture", redirect: false },
+    });
+    api.responses.set("GET /api/auth/get-session", { body: verifiedSession });
+    const claim = page.waitForRequest((request) =>
+      request.url().endsWith(`/cart/${cartId}/claim`),
+    );
+    await page.getByRole("button", { name: "Sign in with password" }).click();
+    const claimRequest = await claim;
+    expect(claimRequest.postDataJSON()).toEqual({ expectedUserId: user.id });
+    expect(claimRequest.headers()["x-cart-token"]).toBe(cartId);
+    await expect(page).toHaveURL(destination);
+    const saved = await page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key) ?? "null"),
+      storageKey,
+    );
+    expect(saved).toMatchObject({ cartId, ownerId: user.id });
+    expect(saved.guestToken).toBeUndefined();
+    if (destination.startsWith("/cart")) {
+      await expect(
+        page.getByRole("dialog", { name: "Your bag" }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Retained guest part", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Product not found.", { exact: true }),
+      ).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(page).toHaveURL("/");
+      await page.goBack();
+      await expect(
+        page.getByRole("dialog", { name: "Your bag" }),
+      ).toBeVisible();
+      await page.goForward();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    }
+    await checkLayout(page);
   });
-  api.responses.set("GET /v2/colors", { body: { success: true, data: [] } });
-  await page.addInitScript(
-    ({ key, id }) => {
-      localStorage.setItem(
-        key,
-        JSON.stringify({
-          cartId: id,
-          guestToken: id,
-          ownerId: null,
-          pending: false,
-          revision: crypto.randomUUID(),
-        }),
-      );
-    },
-    { key: storageKey, id: cartId },
-  );
-  await page.goto("/signin?returnTo=%2Fproducts%2F1");
-  await page.getByLabel("Email", { exact: true }).fill(user.email);
-  await page
-    .getByLabel("Password", { exact: true })
-    .fill("controlled smoke password");
-  api.responses.set("POST /api/auth/sign-in/email", {
-    body: { user, token: "fixture", redirect: false },
-  });
-  api.responses.set("GET /api/auth/get-session", { body: verifiedSession });
-  const claim = page.waitForRequest((request) =>
-    request.url().endsWith(`/cart/${cartId}/claim`),
-  );
-  await page.getByRole("button", { name: "Sign in with password" }).click();
-  const claimRequest = await claim;
-  expect(claimRequest.postDataJSON()).toEqual({ expectedUserId: user.id });
-  expect(claimRequest.headers()["x-cart-token"]).toBe(cartId);
-  await expect(page).toHaveURL(/\/products\/1$/);
-  const saved = await page.evaluate(
-    (key) => JSON.parse(localStorage.getItem(key) ?? "null"),
-    storageKey,
-  );
-  expect(saved).toMatchObject({ cartId, ownerId: user.id });
-  expect(saved.guestToken).toBeUndefined();
-  await checkLayout(page);
-});
+}
 
 test("an expired owned-cart read revalidates the session and preserves the bag for sign-in", async ({
   page,

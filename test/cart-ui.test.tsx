@@ -549,3 +549,19 @@ it("keeps an account return destination valid and closes a self-returning profil
   await waitFor(() => expect(location.pathname).toBe("/"));
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+it.each(["/cart", "/cart/"])(
+  "opens the saved bag at the accepted %s destination without an invalid product",
+  async (path) => {
+    save();
+    server = { items: [line], total: 2.29 };
+    window.history.replaceState(null, "", path);
+    renderWithClient(<App />);
+    const bag = await screen.findByRole("dialog", { name: "Your bag" });
+    await within(bag).findByText("Part 1");
+    expect(screen.queryByText("Product not found.")).toBeNull();
+    fireEvent.click(within(bag).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(location.pathname).toBe("/"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  },
+);

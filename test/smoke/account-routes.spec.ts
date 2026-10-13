@@ -1,5 +1,29 @@
 import { checkLayout, expect, test } from "./fixtures";
 
+for (const path of ["/cart", "/cart/"]) {
+  test(`direct ${path} opens the bag on refresh and follows browser history`, async ({
+    page,
+    api,
+  }) => {
+    api.responses.set("GET /api/auth/get-session", { body: null });
+    await page.goto(path);
+    await expect(page.getByRole("dialog", { name: "Your bag" })).toBeVisible();
+    await expect(
+      page.getByText("Product not found.", { exact: true }),
+    ).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("dialog", { name: "Your bag" })).toBeVisible();
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(page).toHaveURL("/");
+    await page.goBack();
+    await expect(page).toHaveURL(path);
+    await expect(page.getByRole("dialog", { name: "Your bag" })).toBeVisible();
+    await page.goForward();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await checkLayout(page);
+  });
+}
+
 for (const route of ["signin", "signup", "profile"]) {
   test(`trailing-slash ${route} supports closing and browser history`, async ({
     page,

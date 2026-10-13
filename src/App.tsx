@@ -57,6 +57,7 @@ export function App() {
       />
       <Route path="/" element={<Storefront />} />
       <Route path="/products/:productId" element={<Storefront />} />
+      <Route path="/cart" element={<Storefront />} />
       <Route path="/signin" element={<Storefront />} />
       <Route path="/signup" element={<Storefront />} />
       <Route path="/profile" element={<Storefront />} />
@@ -79,7 +80,9 @@ function Storefront() {
   const productId = matchPath("/products/:productId", benchPath)?.params
     .productId;
   const id =
-    benchPath === "/" || accountRoute(benchPath)
+    benchPath === "/" ||
+    accountRoute(benchPath) ||
+    matchPath("/cart", benchPath)
       ? null
       : parseProductId(productId);
   const previousPath = useRef(pathname);
