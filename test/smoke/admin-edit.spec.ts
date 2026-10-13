@@ -1,3 +1,4 @@
+import type { ProductPage } from "../../src/storefront/api";
 import { draft, draftId, otherId } from "../admin-fixtures";
 import {
   mutationResult,
@@ -44,17 +45,23 @@ test("an existing listing keeps its saved values until an explicitly confirmed u
     target: { kind: "existing", productId: 7 },
     context: { status: "available", product: other, categories },
   });
-  const catalogPage = (current = product) => ({
-    products: [current, other],
-    pagination: {
-      page: 1,
-      limit: 100,
-      totalItems: 2,
-      totalPages: 1,
-      hasNextPage: false,
-      hasPreviousPage: false,
-    },
-  });
+  const catalogPage = (current = product): ProductPage => {
+    const products = [
+      { ...current, categories },
+      { ...other, categories },
+    ];
+    return {
+      products,
+      pagination: {
+        page: 1,
+        limit: 100,
+        totalItems: 2,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      },
+    };
+  };
   api.responses.set("GET /admin/product-drafts", {
     body: {
       drafts: [...draftList(saved).drafts, ...draftList(otherDraft).drafts],
