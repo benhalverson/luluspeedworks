@@ -6,7 +6,7 @@ for (const reason of [
   "budget_exhausted",
   "accounting_unavailable",
 ]) {
-  test(`shopping requests preserve A2UI browsing and bag after ${reason}`, async ({
+  test(`shopping requests preserve ${reason === "inference_unavailable" ? "A2UI browsing and bag" : "shopping through checkout review"} after ${reason}`, async ({
     page,
     api,
   }) => {
@@ -133,6 +133,164 @@ for (const reason of [
         ),
       ),
     ).toBe(false);
+    if (reason === "inference_unavailable") return;
+
+    const filamentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const quoteId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const line = {
+      id: 1,
+      productId: "SMOKE-1",
+      name: "Smoke part",
+      quantity: 2,
+      color: "red",
+      filamentType: "PLA",
+      filamentId,
+      price: 2.29,
+    };
+    api.responses.set("GET /v2/colors", {
+      body: {
+        success: true,
+        data: [
+          {
+            publicId: filamentId,
+            name: "Red PLA",
+            color: "red",
+            profile: "PLA",
+            available: true,
+          },
+        ],
+      },
+    });
+    const writes: { method: string; path: string; body: unknown }[] = [];
+    await page.route("https://api.lulu.test/cart/*", async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+      if (path === "/cart/add" || path === "/cart/update") {
+        writes.push({
+          method: request.method(),
+          path,
+          body: request.postDataJSON(),
+        });
+        const quantity = path === "/cart/add" ? 2 : 3;
+        api.responses.set(`GET /cart/${cartId}`, {
+          body: {
+            items: [{ ...line, quantity }],
+            total: quantity === 2 ? 4.58 : 6.87,
+          },
+        });
+      }
+      await route.fallback();
+    });
+    api.responses.set("POST /cart/add", { body: { message: "Added" } });
+    api.responses.set("PUT /cart/update", { body: { message: "Updated" } });
+    const quote = {
+      id: quoteId,
+      cartId,
+      currency: "USD",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 900_000,
+      status: "valid",
+      address: {
+        name: "Smoke Admin",
+        line1: "123 Example Avenue",
+        line2: "",
+        city: "Portland",
+        state: "OR",
+        zip: "97201",
+        country: "US",
+      },
+      lines: [
+        {
+          cartItemId: line.id,
+          name: line.name,
+          skuNumber: line.productId,
+          quantity: 3,
+          color: line.color,
+          filamentType: line.filamentType,
+          filamentId,
+          // Current server prices, distinct from the catalog and bag snapshot.
+          unitAmountCents: 250,
+          totalAmountCents: 750,
+        },
+      ],
+      subtotalCents: 750,
+      shippingCents: 113,
+      totalCents: 863,
+    };
+    api.responses.set(`POST /cart/${cartId}/quotes`, { body: quote });
+    api.responses.set(`GET /cart/${cartId}/quotes/${quoteId}`, { body: quote });
+
+    await page.getByRole("link", { name: "Smoke part" }).click();
+    await page.getByLabel("Color", { exact: true }).selectOption(filamentId);
+    await page.getByLabel("Quantity", { exact: true }).fill("2");
+    await page.getByRole("button", { name: "Add to bag" }).click();
+    await page.getByRole("button", { name: "Bag (2)", exact: true }).click();
+    const bag = page.getByRole("dialog", { name: "Your bag" });
+    await expect(bag.getByText(/Quantity: 2/)).toBeVisible();
+    await expect(
+      bag.getByText("red · PLA · SKU SMOKE-1", { exact: true }),
+    ).toBeVisible();
+    await bag
+      .getByRole("button", { name: "Increase Smoke part quantity" })
+      .click();
+    await expect(bag.getByText(/Quantity: 3/)).toBeVisible();
+    expect(writes).toEqual([
+      {
+        method: "POST",
+        path: "/cart/add",
+        body: {
+          cartId,
+          skuNumber: "SMOKE-1",
+          quantity: 2,
+          color: "red",
+          filamentType: "PLA",
+          filamentId,
+        },
+      },
+      {
+        method: "PUT",
+        path: "/cart/update",
+        body: { cartId, itemId: line.id, quantity: 3 },
+      },
+    ]);
+    await bag
+      .getByRole("link", { name: "Review shipping and checkout" })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Shipping and checkout review" }),
+    ).toBeVisible();
+    expect(api.requests).not.toContain(`POST /cart/${cartId}/quotes`);
+    const quoteRequest = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" &&
+        request.url().endsWith(`/cart/${cartId}/quotes`),
+    );
+    await page.getByRole("button", { name: "Request a fresh quote" }).click();
+    expect((await quoteRequest).postDataJSON()).toEqual({});
+    await expect(
+      page.getByText("Smoke part · 3 × $2.50 · red · PLA · $7.50"),
+    ).toBeVisible();
+    await expect(page.getByText(/Ship to:/)).toContainText(
+      "123 Example Avenue",
+    );
+    await expect(page.getByText("$1.13", { exact: true })).toBeVisible();
+    await expect(page.getByText("$8.63", { exact: true })).toBeVisible();
+    const confirm = page.getByRole("button", {
+      name: "Continue to Square — $8.63 USD",
+    });
+    await expect(confirm).toBeEnabled();
+    await confirm.focus();
+    await expect(confirm).toBeFocused();
+    await expect(
+      page.getByText(/Returning here does not confirm payment/),
+    ).toBeVisible();
+    expect(requests).toHaveLength(2);
+    expect(
+      api.requests.filter((key) => key === `POST /cart/${cartId}/quotes`),
+    ).toHaveLength(1);
+    expect(api.requests).toContain(`GET /cart/${cartId}/quotes/${quoteId}`);
+    expect(api.requests).not.toContain(`POST /cart/${cartId}/checkout`);
+    await checkLayout(page);
   });
 }
 
