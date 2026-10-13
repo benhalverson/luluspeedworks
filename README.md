@@ -1,8 +1,8 @@
 # Lulu Speedworks
 
-Frontend-only React storefront for physical RC parts and pit tools. The selected **B — Pit Bench** storefront uses the real A2UI renderer with catalog browsing, product configuration, a persistent bag, account dialogs and password recovery. The private **Build Log** workspace provides administrator-authorized product conversations, draft editing and attachment controls.
+Frontend-only React storefront for physical RC parts and pit tools. The selected **B — Pit Bench** storefront uses the real A2UI renderer with catalog browsing, product configuration, a persistent bag, account dialogs and password recovery. The private **C — Build Log** workspace provides searchable listings and administrator-authorized product conversations, with draft editing, attachment controls and explicit catalog create, update and delete actions through the companion API.
 
-These are frontend capabilities. Admin conversation preparation supports bounded interpretation through the companion API, targeted A2UI questions, direct corrections and explicit category creation after exact-name confirmation. The workspace does not provide catalog publication, full product CRUD or checkout. Backend integration and production readiness require separate verification.
+Each admin conversation works on one product or new-product draft. Conversation preparation supports bounded interpretation through the companion API, targeted A2UI questions, direct corrections and explicit category creation after exact-name confirmation. One inline Product Card collects answers and presents server pricing for explicit submission; a successful catalog operation replaces the interactive card with a completion summary. The frontend renders the API's Square publication, local catalog and checkout-readiness results. Controlled tests exercise the real React/A2UI interface with mocked API responses; actual provider outcomes and deployment remain separate from this frontend verification.
 
 ## Clean-clone setup
 
@@ -77,9 +77,11 @@ Logs are retained in `artifacts/smoke/server.log`; the HTML report is in `artifa
 | Accounts and private bag state | [auth.ts](src/storefront/auth.ts), [account.tsx](src/storefront/account.tsx), [cart.ts](src/storefront/cart.ts), [profile.tsx](src/storefront/profile.tsx), [passkey.tsx](src/storefront/passkey.tsx) |
 | Password recovery | [recovery.tsx](src/storefront/recovery.tsx): standalone request/reset routes |
 | Customer orders | [orders.tsx](src/storefront/orders.tsx): verified account history, permanent detail routes and separate payment/fulfillment evidence |
-| Admin access and draft workflow | [workspace.tsx](src/admin/workspace.tsx): identity-scoped verification, separate draft caches, private callbacks and recovery |
+| Admin access and conversations | [workspace.tsx](src/admin/workspace.tsx): Products/Conversations navigation, Recent conversations, identity-scoped verification and separate draft caches. [creation.ts](src/admin/creation.ts) retains the request key for an unresolved conversation creation and recovers that same request before allowing another. |
 | Draft requests and attachments | [request.ts](src/admin/request.ts), [attachments.ts](src/admin/attachments.ts), [contracts.ts](src/admin/contracts.ts): protected API denial versus external transfer failure |
 | Conversation preparation | `POST /admin/product-drafts/:id/prepare` accepts revision-bound answers and an optional current message. Direct edits omit the message and bypass inference. Read/reload and completeness never execute operations. Exact category confirmation creates or reuses that category through the revision-checked API; the endpoint does not return a proposed online price. |
+| Catalog preparation and submission | [mutations.ts](src/admin/mutations.ts) validates preparation, operation and catalog-result responses. `POST /admin/product-drafts/:id/pricing/prepare` returns authoritative pricing, validation and a revision-bound snapshot without authorizing submission. An explicit card action sends the revision, preparation ID and create/update/delete action to `POST /admin/product-drafts/:id/submit`. |
+| Catalog operation recovery | `GET /admin/product-drafts/:id/operation` reads saved progress without submitting another mutation. Explicit recovery uses `POST /admin/product-drafts/:id/reconcile` with the saved operation ID. The workspace checks the draft, preparation, action and confirmed operation identity before resolving an uncertain request; Square confirmation, local completion and checkout readiness remain distinct states. |
 | Admin A2UI cards | [card.tsx](src/admin/card.tsx): renderer lifecycle and action bindings |
 | Shared appearance | [brand-link.tsx](src/components/brand-link.tsx), [local controls](src/components/ui), [styles.css](src/styles.css): branding, shadcn controls, theme/base styles |
 | Regression and browser tests | [test/](test), [smoke configuration](playwright.config.ts), [review standards](CODING_STANDARDS.md) |
@@ -146,6 +148,7 @@ After building, `pnpm exec wrangler dev --local` can preview the static hosting 
 ## Scope and references
 
 - [Issue #13](https://github.com/benhalverson/luluspeedworks/issues/13) records the original scaffold acceptance contract.
+- [Issue #34](https://github.com/benhalverson/luluspeedworks/issues/34) specifies the approved C — Build Log admin workflow and its controlled frontend/backend acceptance scope.
 - [Reviewed storefront specification](docs/reference/storefront-spec.md) records broader launch requirements and unresolved integration gates.
 - [Design comparison and selected B](docs/reference/interface-designs.md) preserves the Pit Bench selection from prototype commit `ab6a17c3256c488dc1e9f5ec2803616793fb9696`.
 - [Reference scope notes](docs/reference/README.md) distinguish historical plans from this frontend-only scaffold.
