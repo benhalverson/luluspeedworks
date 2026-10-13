@@ -13,6 +13,7 @@ import { useEffect, useEffectEvent, useState } from "react";
 import { z } from "zod";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { type AttachmentCleanup, attachmentCleanupSchema } from "./contracts";
 
 const Field = createComponentImplementation(
   {
@@ -228,6 +229,7 @@ const mutationViewSchema = z.object({
   operationId: z.string().optional(),
   completed: z.boolean().optional(),
   finished: z.boolean().optional(),
+  cleanup: z.array(attachmentCleanupSchema).optional(),
   deletion: z
     .object({
       name: z.string(),
@@ -242,6 +244,32 @@ const mutationLabels = {
   update: "Save changes",
   delete: "Delete product",
 };
+
+/** Operation cleanup can remain pending after the catalog change succeeds. */
+function OperationCleanup({
+  items,
+}: {
+  items: AttachmentCleanup[] | undefined;
+}) {
+  return items?.length ? (
+    <section
+      aria-label="Product operation cleanup"
+      className="my-3 grid gap-2 rounded border border-border p-3 text-sm"
+    >
+      <h3 className="font-semibold">Product file cleanup</h3>
+      {items.map((item) => (
+        <p key={item.id}>
+          {item.status === "pending"
+            ? "File cleanup pending"
+            : item.status === "protected"
+              ? "Referenced file retained"
+              : "File deleted"}
+          {item.reason ? `: ${item.reason}` : ""}
+        </p>
+      ))}
+    </section>
+  ) : null;
+}
 
 const ProductCard = createComponentImplementation(
   {
@@ -280,6 +308,7 @@ const ProductCard = createComponentImplementation(
             {mutation.status}
           </p>
           <p className="whitespace-pre-wrap text-sm">{mutation.review}</p>
+          <OperationCleanup items={mutation.cleanup} />
           {mutation.action === "delete" ? (
             <p>
               This product is unavailable. Start a new product or select another
@@ -453,6 +482,7 @@ const ProductCard = createComponentImplementation(
             <p role="status" className="text-sm">
               {mutation.status}
             </p>
+            <OperationCleanup items={mutation.cleanup} />
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
