@@ -156,6 +156,31 @@ Reference documents preserve historical plans, not an inventory of completed fea
 
 ## Inference budget fallback
 
+New shopping runs request the companion API's `lulu.a2ui.v2` public catalog
+bindings. The API companion must be available **before deploying this client**:
+the earlier API's strict request parser rejects the `uiContract` field. Deploying
+or enabling inference is separate scope; this change does not enable the model.
+Existing `lulu.a2ui.v1` responses remain supported, and uncertain requests saved
+by an earlier client retain their exact original body and run identity during
+recovery. Only a subsequent explicit new request negotiates v2.
+
+The model selects public product records under `/agentCatalog/products/<id>`.
+The API supplies their catalog facts and fixed field bindings. The client
+validates the entire bounded snapshot, component graph, record identities, and
+per-field paths before applying either A2UI message. It waits for a correlated
+successful terminal event and clean stream completion, then rechecks the current
+visit/revision. Invalid or stale output preserves the previous bound surface;
+model output cannot read or replace private bag, account, configuration or
+checkout state. Existing validated commerce effects and direct controls remain
+available.
+
+The controlled corpus covers all five initial product types, ambiguity,
+unsupported fit and malformed bindings through the pinned A2UI renderer and
+desktop/mobile production builds. HTTP/inference fixtures verify these contracts
+and UI behavior only. They do not establish live model quality, production
+catalog accuracy, provider usage reporting or paid inference acceptance. The
+companion API retains its separate live evaluation and deployment gates.
+
 Budget exhaustion and accounting outages retain the last valid A2UI surface and
 shopping input. Direct catalog browsing and bag controls remain available. Streamed
 fallbacks and recovered terminal run metadata show the same reason-specific state;

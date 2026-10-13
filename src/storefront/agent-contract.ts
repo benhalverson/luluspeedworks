@@ -9,7 +9,7 @@ const image = z.union([z.literal(""), z.string().url().startsWith("https://")]);
 /** Permit only the named trusted shell action, without model-provided arguments. */
 const action = <T extends string>(name: T) =>
   z.object({ event: z.object({ name: z.literal(name) }).strict() }).strict();
-const node = z.discriminatedUnion("component", [
+export const agentNodeSchema = z.discriminatedUnion("component", [
   z
     .object({
       id: z.literal("products"),
@@ -84,7 +84,7 @@ export const batchSchema = z
             updateComponents: z
               .object({
                 surfaceId: z.literal(surfaceId),
-                components: z.array(node).min(2).max(16),
+                components: z.array(agentNodeSchema).min(2).max(16),
               })
               .strict(),
           })
@@ -130,7 +130,7 @@ export const batchSchema = z
         });
     },
   );
-export type AgentBatch = z.infer<typeof batchSchema>;
+export type LiteralAgentBatch = z.infer<typeof batchSchema>;
 export const fallbackSchema = z.enum([
   "disabled",
   "inference_unavailable",

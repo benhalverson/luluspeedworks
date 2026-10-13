@@ -1,11 +1,11 @@
 import { type QueryClient, QueryObserver } from "@tanstack/react-query";
+import { type AgentBatch, bindingContract } from "./agent-bindings";
 import {
   type AgentAccess,
   type AgentCommerce,
   readAgentCart,
 } from "./agent-commerce";
 import {
-  type AgentBatch,
   type AgentSession,
   runStatusSchema,
   sessionSchema,
@@ -381,7 +381,14 @@ function serializeRequest(
   const context = [...history];
   /** Rebuild after truncation so the measured bytes match the transmitted body. */
   const serialize = () =>
-    JSON.stringify({ runId, uiRevision, message, context, ...commerce });
+    JSON.stringify({
+      runId,
+      uiRevision,
+      message,
+      context,
+      uiContract: bindingContract,
+      ...commerce,
+    });
   let body = serialize();
   while (new TextEncoder().encode(body).byteLength > 32768) {
     if (!context.length) throw new Error("Shopping request too large");
