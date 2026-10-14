@@ -9,8 +9,20 @@ import {
 import { beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 import type { ProductDraft } from "../src/admin/contracts";
-import type { Action, Preparation } from "../src/admin/mutations";
-import { draft, draftId, otherId, photo } from "./admin-fixtures";
+import type {
+  Action,
+  MutationResult,
+  Preparation,
+} from "../src/admin/mutations";
+import {
+  draft,
+  draftId,
+  otherId,
+  photo,
+  photoId,
+  transfer,
+  transferId,
+} from "./admin-fixtures";
 import {
   mutationResult,
   operationId,
@@ -588,6 +600,348 @@ it("does not resubmit the same preparation after a saved update has succeeded", 
     }),
   );
 });
+
+it.each(["protected", "deleted"] as const)(
+  "retains completed replacement identity while operation cleanup retries become %s",
+  async (status) => {
+    saved = draft({
+      target: { kind: "existing", productId: 42 },
+      context: {
+        status: "available",
+        product: {
+          id: 42,
+          name: "Updated bracket",
+          description: "Saved replacement",
+          image: null,
+          price: 3,
+          inPersonPrice: 7.25,
+          markupPercentage: 50,
+          filamentType: "PLA",
+          color: "Red",
+          skuNumber: "BRACKET-42",
+          publicFileServiceId: "replacement-file",
+        },
+        categories: [],
+      },
+    });
+    prepared = preparation("update");
+    let result: MutationResult = mutationResult("update");
+    if (!result.operation || !result.product) throw Error("Expected result");
+    result.product = {
+      ...result.product,
+      name: "Updated bracket",
+      price: 3,
+      inPersonPrice: 7.25,
+      publicFileServiceId: "replacement-file",
+    };
+    result.operation.cleanup = [
+      {
+        id: photoId,
+        assetId: photoId,
+        status: "pending",
+        reason: "Provider deletion unavailable",
+      },
+    ];
+    let retries = 0;
+    override = (request) => {
+      if (request.path.endsWith("/operation")) return Response.json(result);
+      if (request.path.endsWith("/reconcile")) {
+        retries++;
+        if (!result.operation) throw Error("Expected operation");
+        result = {
+          ...result,
+          operation: {
+            ...result.operation,
+            cleanup: [
+              {
+                id: photoId,
+                assetId: photoId,
+                status: retries === 1 ? "pending" : status,
+                reason:
+                  retries === 1
+                    ? "Provider deletion still unavailable"
+                    : status === "protected"
+                      ? "Retained by an order"
+                      : null,
+              },
+            ],
+          },
+        };
+        return Response.json(result);
+      }
+    };
+    const mounted = renderWithClient(<App />);
+    const completion = await screen.findByRole("region", {
+      name: "Product completion",
+    });
+    expect(completion).toHaveTextContent("Product updated.");
+    expect(completion).toHaveTextContent("Online price: $3.00");
+    expect(completion).toHaveTextContent("In-person price: $7.25");
+    expect(
+      within(completion).getByRole("region", {
+        name: "Product operation cleanup",
+      }),
+    ).toHaveTextContent("File cleanup pending: Provider deletion unavailable");
+    expect(screen.queryByRole("region", { name: "File cleanup" })).toBeNull();
+    expect(writes()).toEqual([]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Check product operation" }),
+    );
+    await screen.findByText(
+      "File cleanup pending: Provider deletion still unavailable",
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Check product operation" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit product details" }),
+    );
+    expect(
+      within(screen.getByRole("region", { name: "Product Card" })).getByRole(
+        "region",
+        { name: "Product operation cleanup" },
+      ),
+    ).toHaveTextContent("Provider deletion still unavailable");
+    saved.cleanupPending = true;
+    saved.attachments.cleanup = [
+      {
+        id: otherId,
+        assetId: otherId,
+        status: "pending",
+        reason: "Separate draft upload cleanup",
+      },
+    ];
+    mounted.unmount();
+    renderWithClient(<App />);
+    await screen.findByText(
+      "File cleanup pending: Provider deletion still unavailable",
+    );
+    expect(
+      screen.getByRole("region", { name: "File cleanup" }),
+    ).toHaveTextContent("Separate draft upload cleanup");
+    expect(
+      screen.getByRole("region", { name: "File cleanup" }),
+    ).not.toHaveTextContent("Provider deletion still unavailable");
+    expect(writes()).toEqual([
+      {
+        path: `/${draftId}/reconcile`,
+        method: "POST",
+        body: { operationId },
+      },
+    ]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Check product operation" }),
+    );
+    await screen.findByText(
+      status === "protected"
+        ? "Referenced file retained: Retained by an order"
+        : "File deleted",
+    );
+    expect(writes()).toEqual(
+      Array.from({ length: 2 }, () => ({
+        path: `/${draftId}/reconcile`,
+        method: "POST",
+        body: { operationId },
+      })),
+    );
+    expect(
+      screen.getByRole("region", { name: "Product completion" }),
+    ).toHaveTextContent("Product updated.");
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Updated bracket" }),
+    ).toBeVisible();
+    expect(screen.getByText("Product #42 · SKU BRACKET-42")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Product Card" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Check product operation" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("region", { name: "File cleanup" }),
+    ).toHaveTextContent("Separate draft upload cleanup");
+  },
+);
+
+it.each([50, null])(
+  "reviews a retained print replacement with authoritative pricing and markup %s",
+  async (markupPercentage) => {
+    saved = draft({
+      target: { kind: "existing", productId: 42 },
+      context: {
+        status: "available",
+        product: {
+          id: 42,
+          name: "Retained bracket",
+          description: "Unchanged description",
+          image: null,
+          price: 1.5,
+          inPersonPrice: 7.25,
+          markupPercentage,
+          filamentType: "PLA",
+          color: "Red",
+          skuNumber: "BRACKET-42",
+          publicFileServiceId: "original-file",
+        },
+        categories: [{ categoryId: 1, categoryName: "Parts" }],
+      },
+    });
+    saved.attachments.printFile = photo({
+      kind: "print",
+      name: "original.stl",
+      imageUrl: null,
+      publicFileServiceId: "original-file",
+    });
+    if (markupPercentage !== null)
+      prepared = preparation("update", {
+        pricing: {
+          ...preparation().pricing,
+          productionCost: 1,
+          onlinePrice: 1.5,
+          inPersonPrice: 7.25,
+        },
+      });
+    override = (request) => {
+      if (request.path.endsWith("/attachments/intents")) {
+        expect(request.body).toEqual({
+          expectedRevision: 1,
+          kind: "print",
+          name: "replacement.stl",
+          size: 4,
+          replacesId: photoId,
+        });
+        saved.revision = 2;
+        saved.attachments.transfers = [
+          transfer({
+            kind: "print",
+            name: "replacement.stl",
+            replacesId: photoId,
+          }),
+        ];
+        return Response.json({
+          draft: saved,
+          transfer: {
+            id: transferId,
+            upload: {
+              method: "PUT",
+              url: "https://upload.example.com/replacement",
+              headers: {},
+            },
+          },
+        });
+      }
+      if (request.path === "/replacement") {
+        expect(saved.attachments.printFile?.publicFileServiceId).toBe(
+          "original-file",
+        );
+        return new Response(null);
+      }
+      if (request.path.endsWith(`/transfers/${transferId}/confirm`)) {
+        expect(request.body).toEqual({ expectedRevision: 2 });
+        saved.revision = 3;
+        saved.attachments.printFile = photo({
+          id: otherId,
+          assetId: otherId,
+          kind: "print",
+          name: "replacement.stl",
+          imageUrl: null,
+          publicFileServiceId: "replacement-file",
+        });
+        saved.attachments.transfers = [
+          transfer({ kind: "print", name: "replacement.stl", status: "saved" }),
+        ];
+        return Response.json({ draft: saved });
+      }
+      if (request.path.endsWith("/pricing/prepare")) {
+        expect(request.body).toEqual({ expectedRevision: 3, action: "update" });
+        const snapshot = preparation("update").snapshot;
+        if (!snapshot) throw Error("Expected snapshot");
+        prepared = preparation("update", {
+          id: otherId,
+          draftRevision: 3,
+          status: markupPercentage === null ? "blocked" : "ready",
+          readiness: {
+            ready: markupPercentage !== null,
+            submissionAuthorized: false,
+          },
+          validation:
+            markupPercentage === null
+              ? [
+                  {
+                    field: "markupPercentage",
+                    code: "required",
+                    message:
+                      "Supply online markup before replacing the print file.",
+                  },
+                ]
+              : [],
+          snapshot:
+            markupPercentage === null
+              ? null
+              : {
+                  ...snapshot,
+                  publicFileServiceId: "replacement-file",
+                  stl: "replacement.stl",
+                },
+          pricing: {
+            ...preparation().pricing,
+            productionCost: markupPercentage === null ? null : 2,
+            markupPercentage,
+            onlinePrice: markupPercentage === null ? null : 3,
+            inPersonPrice: 7.25,
+          },
+        });
+        return Response.json({ preparation: prepared });
+      }
+    };
+    renderWithClient(<App />);
+    if (markupPercentage === null)
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Edit draft facts" }),
+      );
+    const card = await screen.findByRole("region", { name: "Product Card" });
+    if (markupPercentage !== null)
+      await waitFor(() => expect(submit("update")).toBeEnabled());
+    fireEvent.click(within(card).getByRole("button", { name: "Replace" }));
+    fireEvent.change(
+      screen.getByLabelText("Replacement / reselected print file"),
+      {
+        target: { files: [new File(["1234"], "replacement.stl")] },
+      },
+    );
+    await screen.findByText("Attachments saved.");
+    expect(submit("update")).toBeDisabled();
+    expect(card).toHaveTextContent(
+      "Proposed online price: awaiting server calculation",
+    );
+    expect(card).toHaveTextContent("Current catalog online price: $1.50");
+    expect(card).toHaveTextContent("In-person price: 7.25");
+    fireEvent.click(await review());
+    if (markupPercentage === null) {
+      await screen.findByText(
+        /Supply online markup before replacing the print file/,
+      );
+      expect(submit("update")).toBeDisabled();
+      expect(card).toHaveTextContent("Online markup: Not supplied");
+      expect(card).toHaveTextContent("Online price: Unavailable");
+    } else {
+      await waitFor(() => expect(submit("update")).toBeEnabled());
+      expect(card).toHaveTextContent("Online markup: 50%");
+      expect(card).toHaveTextContent("Production cost: $2.00");
+      expect(card).toHaveTextContent("Proposed online price: $3.00");
+    }
+    expect(card).toHaveTextContent("In-person price: $7.25");
+    expect(card).toHaveTextContent("replacement.stl");
+    expect(writes().map((request) => request.path)).toEqual([
+      `/${draftId}/attachments/intents`,
+      "/replacement",
+      `/${draftId}/attachments/transfers/${transferId}/confirm`,
+      `/${draftId}/pricing/prepare`,
+    ]);
+    expect(saved.state.answers).toEqual({});
+    expect(saved.target).toEqual({ kind: "existing", productId: 42 });
+  },
+);
 
 it("keeps a lost second update unresolved until evidence matches its preparation", async () => {
   saved = draft({

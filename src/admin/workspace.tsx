@@ -1258,6 +1258,7 @@ function Workspace({
             : {}),
           completed: completed || Boolean(mutationUnresolved.current),
           finished: showCompletion,
+          cleanup: operationAllowed ? (savedOperation?.cleanup ?? []) : [],
           review:
             showCompletion && operation.data?.product
               ? `Online price: ${money.format(operation.data.product.price)} · In-person price: ${operation.data.product.inPersonPrice === null ? "Unavailable" : money.format(operation.data.product.inPersonPrice)}`
