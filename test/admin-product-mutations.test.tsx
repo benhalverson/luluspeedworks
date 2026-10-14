@@ -1589,6 +1589,292 @@ it("restores an unconfirmed deletion with exact identity and cancels without a w
   expect(screen.queryByRole("button", { name: "Delete product" })).toBeNull();
 });
 
+it.each(["catalog_changed_retry", "current_preparation_required"])(
+  "refreshes a rejected deletion after %s and requires a new review and confirmation",
+  async (code) => {
+    saved = draft({
+      target: { kind: "existing", productId: 42 },
+      context: {
+        status: "available",
+        product: {
+          id: 42,
+          name: "Prepared part",
+          description: "Part",
+          price: 15,
+          image: "https://api.lulu.test/old.png",
+          filamentType: "PLA",
+          color: "Red",
+          skuNumber: "SKU-42",
+          publicFileServiceId: "file-42",
+        },
+        categories: [],
+      },
+    });
+    prepared = preparation("delete");
+    let rejected = false;
+    override = (request) => {
+      if (request.path.endsWith("/submit") && !rejected) {
+        rejected = true;
+        if (saved.context.status !== "available")
+          throw Error("Expected product");
+        saved.context.product = {
+          ...saved.context.product,
+          name: "Revised part",
+          image: "https://api.lulu.test/revised.png",
+          skuNumber: "SKU-42-V2",
+        };
+        return Response.json({ error: code }, { status: 409 });
+      }
+      if (request.path.endsWith("/pricing/prepare")) {
+        prepared = preparation("delete", { id: otherId });
+        if (!prepared.snapshot) throw Error("Expected snapshot");
+        Object.assign(prepared.snapshot, {
+          name: "Revised part",
+          image: "https://api.lulu.test/revised.png",
+          productRevision: 2,
+        });
+        return Response.json({ preparation: prepared });
+      }
+    };
+    const rendered = renderWithClient(<App />);
+    await waitFor(() => expect(submit("delete")).toBeEnabled());
+    fireEvent.click(submit("delete"));
+    let reviewDeletion = screen.getByRole("button", {
+      name: "Review product deletion",
+    });
+    await waitFor(() => expect(reviewDeletion).toBeEnabled());
+    expect(
+      screen.getByRole("heading", { name: "Revised part", level: 1 }),
+    ).toBeVisible();
+    expect(submit("delete")).toBeDisabled();
+    expect(writes()).toEqual([
+      {
+        path: `/${draftId}/submit`,
+        method: "POST",
+        body: { expectedRevision: 1, preparationId, action: "delete" },
+      },
+    ]);
+    // A fresh visit uses the API's source-binding invalidation contract even
+    // when a catalog revision changes without changing the draft revision.
+    prepared = preparation("delete", {
+      status: "stale",
+      readiness: { ready: false, submissionAuthorized: false },
+    });
+    rendered.unmount();
+    renderWithClient(<App />);
+    reviewDeletion = await screen.findByRole("button", {
+      name: "Review product deletion",
+    });
+    expect(submit("delete")).toBeDisabled();
+    expect(writes()).toHaveLength(1);
+    fireEvent.click(reviewDeletion);
+    await waitFor(() => expect(submit("delete")).toBeEnabled());
+    const confirmation = screen.getByRole("region", {
+      name: "Confirm product deletion",
+    });
+    expect(confirmation).toHaveTextContent("Delete Revised part?");
+    expect(confirmation).toHaveTextContent("SKU SKU-42-V2");
+    expect(within(confirmation).getByRole("img")).toHaveAttribute(
+      "src",
+      "https://api.lulu.test/revised.png",
+    );
+    expect(
+      writes().filter((request) => request.path.endsWith("/submit")),
+    ).toHaveLength(1);
+    fireEvent.click(submit("delete"));
+    await waitFor(() =>
+      expect(writes().at(-1)?.body).toEqual({
+        expectedRevision: 1,
+        preparationId: otherId,
+        action: "delete",
+      }),
+    );
+  },
+);
+
+it.each(["operation", "detail", "preparation"])(
+  "keeps a rejected deletion blocked when its %s refresh fails and recovers on an explicit read",
+  async (failure) => {
+    saved.target = { kind: "existing", productId: 42 };
+    prepared = preparation("delete");
+    let rejected = false;
+    let unavailable = true;
+    override = (request) => {
+      if (request.path.endsWith("/submit")) {
+        rejected = true;
+        return Response.json(
+          { error: "current_preparation_required" },
+          { status: 409 },
+        );
+      }
+      const failedPath =
+        failure === "detail" ? `/${draftId}` : `/${draftId}/${failure}`;
+      if (rejected && unavailable && request.path === failedPath)
+        return Response.json({ error: "Read unavailable" }, { status: 503 });
+    };
+    renderWithClient(<App />);
+    await waitFor(() => expect(submit("delete")).toBeEnabled());
+    fireEvent.click(submit("delete"));
+    const reload = await screen.findByRole("button", {
+      name: "Reload saved state",
+    });
+    await waitFor(() => expect(reload).toBeEnabled());
+    expect(
+      screen.getByRole("button", { name: "Review product deletion" }),
+    ).toBeDisabled();
+    expect(submit("delete")).toBeDisabled();
+    unavailable = false;
+    fireEvent.click(reload);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Review product deletion" }),
+      ).toBeEnabled(),
+    );
+    expect(submit("delete")).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review product deletion" }),
+    );
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    // Even a repeated ready response cannot revive the rejected preparation ID.
+    expect(submit("delete")).toBeDisabled();
+    expect(
+      writes().filter((request) => request.path.endsWith("/submit")),
+    ).toHaveLength(1);
+  },
+);
+
+it.each([
+  "unknown conflict",
+  "temporary failure",
+  "lost response",
+  "pending",
+  "mismatched",
+  "failed",
+])(
+  "preserves deletion operation evidence after a %s response",
+  async (outcome) => {
+    saved.target = { kind: "existing", productId: 42 };
+    prepared = preparation("delete");
+    let rejected = false;
+    const result = mutationResult("delete");
+    if (!result.operation) throw Error("Expected operation");
+    result.operation.state = outcome === "failed" ? "failed" : "pending";
+    result.operation.retryable = outcome !== "failed";
+    if (outcome === "mismatched") result.operation.preparationId = otherId;
+    override = (request) => {
+      if (request.path.endsWith("/submit")) {
+        rejected = true;
+        if (outcome === "lost response")
+          return Promise.reject(new Error("Response lost"));
+        return Response.json(
+          {
+            error:
+              outcome === "unknown conflict"
+                ? "operation_reconciliation_required"
+                : "current_preparation_required",
+          },
+          { status: outcome === "temporary failure" ? 503 : 409 },
+        );
+      }
+      if (
+        rejected &&
+        request.path.endsWith("/operation") &&
+        ["pending", "mismatched", "failed"].includes(outcome)
+      )
+        return Response.json(result);
+    };
+    renderWithClient(<App />);
+    await waitFor(() => expect(submit("delete")).toBeEnabled());
+    const readCount = requests.filter(
+      (request) => request.path === `/${draftId}`,
+    ).length;
+    fireEvent.click(submit("delete"));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("status", { name: "Draft status" }),
+      ).not.toHaveTextContent("Saving…"),
+    );
+    expect(submit("delete")).toBeDisabled();
+    const reviewButton = screen.getByRole("button", {
+      name: "Review product deletion",
+    });
+    if (outcome === "failed") expect(reviewButton).toBeEnabled();
+    else expect(reviewButton).toBeDisabled();
+    expect(
+      requests.filter((request) => request.path === `/${draftId}`),
+    ).toHaveLength(readCount);
+    expect(writes()).toHaveLength(1);
+    if (outcome === "pending")
+      expect(
+        screen.getByRole("button", { name: "Check product operation" }),
+      ).toBeEnabled();
+    else
+      expect(
+        screen.queryByRole("button", { name: "Check product operation" }),
+      ).toBeNull();
+  },
+);
+
+it("distinguishes confirmed Square unpublication from pending local deletion without announcing completion", async () => {
+  saved.target = { kind: "existing", productId: 42 };
+  prepared = preparation("delete");
+  const result = mutationResult("delete");
+  if (!result.operation) throw Error("Expected operation");
+  result.operation.state = "square_confirmed";
+  override = (request) =>
+    request.path.endsWith("/operation") ? Response.json(result) : undefined;
+  renderWithClient(<App />);
+  expect(
+    await screen.findByText(
+      "Square unpublished. Local product deletion is pending.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Product completion" }),
+  ).toBeNull();
+  expect(submit("delete")).toBeDisabled();
+  expect(writes()).toEqual([]);
+});
+
+it.each(["sign-out", "denial"])(
+  "does not publish refreshed deletion evidence after %s while review recovery is pending",
+  async (ending) => {
+    saved.target = { kind: "existing", productId: 42 };
+    prepared = preparation("delete");
+    let rejected = false;
+    let release: ((response: Response) => void) | undefined;
+    override = (request) => {
+      if (request.path.endsWith("/submit")) {
+        rejected = true;
+        return Response.json(
+          { error: "catalog_changed_retry" },
+          { status: 409 },
+        );
+      }
+      if (rejected && request.path.endsWith("/preparation"))
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      if (rejected && ending === "denial" && request.path === `/${draftId}`)
+        return Response.json({ error: "Admin access denied" }, { status: 403 });
+    };
+    const rendered = renderWithClient(<App />);
+    await waitFor(() => expect(submit("delete")).toBeEnabled());
+    fireEvent.click(submit("delete"));
+    await waitFor(() => expect(release).toBeDefined());
+    if (ending === "sign-out") {
+      session.data = null;
+      rendered.rerender(<App />);
+    }
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Product Card" })).toBeNull(),
+    );
+    await act(() => release?.(Response.json({ preparation: prepared })));
+    expect(screen.queryByRole("region", { name: "Product Card" })).toBeNull();
+    expect(writes()).toHaveLength(1);
+  },
+);
+
 it.each([false, true])(
   "continues created product chat in an immutable existing-target conversation (reuse=%s)",
   async (reuse) => {

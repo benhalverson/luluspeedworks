@@ -81,6 +81,7 @@ type MutationAttempt = {
   preparationId: string;
   action: Action;
   operationId?: string;
+  reviewRejected?: boolean;
 };
 type Selection = {
   kind: "photo" | "print";
@@ -449,6 +450,9 @@ function Workspace({
     Record<string, Action>
   >({});
   const mutationUnresolved = useRef<MutationAttempt | null>(null);
+  const [rejectedPreparations, setRejectedPreparations] = useState<
+    Record<string, string>
+  >({});
   const creation = useDraftCreation(identity);
   const creationUnresolved = creation.pending !== null;
   const locked = useRef(false);
@@ -573,9 +577,31 @@ function Workspace({
   }
   /** Inspect durable evidence without replaying a provider effect. */
   async function recoverOperation(draftId: string) {
+    const owner = generation.current;
     const result = await operationRequest(draftId, "operation");
     client.setQueryData([...key, draftId, "operation"], result);
     const attempt = mutationUnresolved.current;
+    if (!result.operation && attempt?.reviewRejected) {
+      const detailKey = [...key, draftId];
+      const reviewKey = [...detailKey, "preparation"];
+      await Promise.all([
+        client.cancelQueries({ queryKey: detailKey, exact: true }),
+        client.cancelQueries({ queryKey: reviewKey, exact: true }),
+      ]);
+      assertVisit(owner);
+      const [latest, review] = await Promise.all([
+        ownedRequest(`/${draftId}`, productDraftResponseSchema),
+        ownedRequest(`/${draftId}/preparation`, preparationResponseSchema),
+      ]);
+      publish(latest);
+      client.setQueryData(reviewKey, review);
+      setRequestedActions((current) => ({
+        ...current,
+        [draftId]: attempt.action,
+      }));
+      mutationUnresolved.current = null;
+      setBlocked(false);
+    }
     if (result.operation && (!attempt || matchesAttempt(result, attempt))) {
       mutationUnresolved.current = null;
       setBlocked(false);
@@ -600,6 +626,8 @@ function Workspace({
   }
   /** HTTP success is separate from durable completion and checkout readiness. */
   function operationNotice(result: MutationResult) {
+    if (!result.operation && !mutationUnresolved.current)
+      return "Product action was not started. Saved details reloaded. Review again before confirming.";
     if (!result.operation || mutationUnresolved.current)
       return "The product operation outcome is unresolved. Reload saved state before retrying.";
     const current = result.operation;
@@ -609,10 +637,15 @@ function Workspace({
           prepared:
             "Product preparation saved. Square synchronization has not been confirmed.",
           pending:
-            "Square synchronization is pending. Its outcome is not yet confirmed.",
+            current.action === "delete"
+              ? "Square unpublication is pending. Its outcome is not yet confirmed."
+              : "Square synchronization is pending. Its outcome is not yet confirmed.",
           item_confirmed:
             "Square item confirmed. Photo synchronization is pending.",
-          square_confirmed: "Square confirmed. Local catalog save is pending.",
+          square_confirmed:
+            current.action === "delete"
+              ? "Square unpublished. Local product deletion is pending."
+              : "Square confirmed. Local catalog save is pending.",
           repair_required:
             "The saved operation needs repair. Check it before trying another catalog change.",
           failed:
@@ -903,6 +936,23 @@ function Workspace({
             expectedRevision: draft.revision,
             preparationId: prepared.id,
             action: requested.data,
+          }).catch((error: unknown) => {
+            // These submit codes precede provider dispatch. A failed inert row
+            // can still exist, so recovery must inspect operation evidence first.
+            if (
+              error instanceof DraftRequestError &&
+              error.source === "draft" &&
+              error.status === 409 &&
+              (error.message === "catalog_changed_retry" ||
+                error.message === "current_preparation_required")
+            ) {
+              attempt.reviewRejected = true;
+              setRejectedPreparations((current) => ({
+                ...current,
+                [draft.id]: prepared.id,
+              }));
+            }
+            throw error;
           });
           client.setQueryData(operationKey, result);
           if (!matchesAttempt(result, attempt)) {
@@ -1207,6 +1257,7 @@ function Workspace({
       prepared?.status === "ready" &&
       prepared.readiness.ready &&
       prepared.draftRevision === draft.revision &&
+      prepared.id !== rejectedPreparations[draft.id] &&
       prepared.snapshot?.action === selectedAction &&
       matchesTarget,
   );
@@ -1267,7 +1318,9 @@ function Workspace({
             ? operationNotice(operation.data)
             : preparation.isError || operation.isError
               ? "Saved product review unavailable. Review again before confirming an action."
-              : prepared && prepared.draftRevision !== draft.revision
+              : prepared &&
+                  (prepared.draftRevision !== draft.revision ||
+                    prepared.id === rejectedPreparations[draft.id])
                 ? "Review is stale. Review the latest draft before confirming."
                 : prepared
                   ? `Product review ${prepared.status}.`
