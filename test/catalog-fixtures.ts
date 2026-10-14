@@ -12,10 +12,15 @@ export const product = (id = 1) => ({
   image: "https://photos.example.com/part.png",
   categoryId: null,
 });
-export function apiPage(ids: number[], page = 1, totalItems = ids.length) {
+export function apiPage(
+  ids: number[],
+  page = 1,
+  totalItems = ids.length,
+  membership = categories,
+) {
   const totalPages = Math.ceil(totalItems / 100);
   return {
-    products: ids.map(product),
+    products: ids.map((id) => ({ ...product(id), categories: membership })),
     pagination: {
       page,
       limit: 100,
@@ -40,6 +45,7 @@ export function mockCatalog(count = 12, membership = categories) {
           ),
           page,
           count,
+          membership,
         ),
       );
     }

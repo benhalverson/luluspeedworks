@@ -82,7 +82,8 @@ export const test = base.extend<{
       }
       const key = `${request.method()} ${url.pathname}`;
       requests.push(key);
-      let reply = await responses.get(key);
+      let reply = await (responses.get(`${key}${url.search}`) ??
+        responses.get(key));
       if (!reply) {
         if (url.pathname === "/api/auth/get-session")
           reply = {
@@ -152,7 +153,7 @@ export const test = base.extend<{
         else if (url.pathname === "/products")
           reply = {
             body: {
-              products: [product],
+              products: [{ ...product, categories }],
               pagination: {
                 page: 1,
                 limit: 100,

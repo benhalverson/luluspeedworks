@@ -28,7 +28,7 @@ function pendingRequests() {
   return pending;
 }
 
-it("starts roots, remaining pages and details concurrently, publishes only a complete ordered snapshot", async () => {
+it("loads a large catalog from roots and concurrent pages, publishes an ordered snapshot without detail requests", async () => {
   const pending = pendingRequests();
   renderWithClient(<App />);
   expect([...pending.keys()]).toEqual([
@@ -67,18 +67,12 @@ it("starts roots, remaining pages and details concurrently, publishes only a com
       ),
     );
   });
-  await waitFor(() => expect(pending.has("/product/201")).toBe(true));
   expect(
     [...pending.keys()].filter((key) => key.startsWith("/product/")),
-  ).toHaveLength(201);
-  await act(async () => {
-    for (let id = 201; id >= 2; id--)
-      pending.get(`/product/${id}`)?.resolve(Response.json({ id, categories }));
-    pending.get("/categories")?.resolve(Response.json(categories));
-  });
+  ).toHaveLength(0);
   expect(screen.queryAllByRole("listitem")).toHaveLength(0);
   await act(async () =>
-    pending.get("/product/1")?.resolve(Response.json({ id: 1, categories })),
+    pending.get("/categories")?.resolve(Response.json(categories)),
   );
   await screen.findByText("Part 1");
   expect(screen.getAllByRole("listitem")).toHaveLength(10);
@@ -89,6 +83,14 @@ it("starts roots, remaining pages and details concurrently, publishes only a com
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
   expect(screen.getByText("Part 201")).toBeVisible();
   expect(screen.getByText("$2.29")).toBeVisible();
+  expect(
+    [...pending.keys()].filter((path) => !path.startsWith("/api/auth/")),
+  ).toEqual([
+    "/categories",
+    "/products?page=1&limit=100",
+    "/products?page=2&limit=100",
+    "/products?page=3&limit=100",
+  ]);
 });
 
 it("reuses the five-minute cache, disables automatic refetch, and isolates every resource by origin", async () => {
@@ -96,7 +98,7 @@ it("reuses the five-minute cache, disables automatic refetch, and isolates every
   const fetcher = mockCatalog(1);
   const first = renderWithClient(<App />, client);
   await screen.findByText("Part 1");
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(fetcher).toHaveBeenCalledTimes(2);
   expect(
     client
       .getQueryCache()
@@ -113,17 +115,17 @@ it("reuses the five-minute cache, disables automatic refetch, and isolates every
     onlineManager.setOnline(false);
     onlineManager.setOnline(true);
   });
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(fetcher).toHaveBeenCalledTimes(2);
   vi.stubEnv("VITE_API_ORIGIN", "https://other.example.com");
   second.rerender(<App />);
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(6));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(4));
   await screen.findByText("Part 1");
   expect(
     client.getQueryCache().findAll({ queryKey: ["catalog"] }),
-  ).toHaveLength(6);
+  ).toHaveLength(4);
   expect(
     fetcher.mock.calls
-      .slice(3)
+      .slice(2)
       .every(
         ([input, init]) =>
           new URL(String(input)).origin === "https://other.example.com" &&
@@ -132,15 +134,13 @@ it("reuses the five-minute cache, disables automatic refetch, and isolates every
   ).toBe(true);
 });
 
-it.each(["page", "detail"])(
+it.each(["page", "categories"])(
   "hides partial results after a %s failure and retries from page one with fresh memberships",
   async (failure) => {
     const fetcher = mockCatalog(101);
     const original = fetcher.getMockImplementation();
     fetcher.mockImplementation((input, init) => {
-      if (
-        String(input).includes(failure === "page" ? "page=2" : "/product/101")
-      )
+      if (String(input).includes(failure === "page" ? "page=2" : "/categories"))
         return Promise.resolve(new Response(null, { status: 503 }));
       if (!original) throw new Error("Missing fixture");
       return original(input, init);
@@ -156,7 +156,7 @@ it.each(["page", "detail"])(
         ([input]) =>
           new URL(String(input)).pathname + new URL(String(input)).search,
       ),
-    ).toEqual(["/categories", "/products?page=1&limit=100", "/product/1"]);
+    ).toEqual(["/categories", "/products?page=1&limit=100"]);
     fireEvent.click(screen.getByRole("button", { name: "RC Parts" }));
     expect(
       screen.getByRole("status", { name: "Catalog status" }),
@@ -164,16 +164,26 @@ it.each(["page", "detail"])(
   },
 );
 
-it.each(["inconsistent", "json", "detail"])(
+it.each(["inconsistent", "json", "membership"])(
   "distinguishes %s responses",
   async (kind) => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(Response.json(categories))
       .mockResolvedValueOnce(
-        kind === "json" ? new Response("{") : Response.json(apiPage([1])),
-      )
-      .mockResolvedValueOnce(
-        Response.json(kind === "detail" ? { id: 1 } : { id: 2, categories }),
+        kind === "json"
+          ? new Response("{")
+          : Response.json({
+              ...apiPage([1]),
+              products: [
+                {
+                  ...apiPage([1]).products[0],
+                  categories:
+                    kind === "membership"
+                      ? undefined
+                      : [{ categoryId: 99, categoryName: "Unknown" }],
+                },
+              ],
+            }),
       );
     renderWithClient(<App />);
     await screen.findByText(

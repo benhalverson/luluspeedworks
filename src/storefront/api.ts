@@ -12,7 +12,7 @@ const productSchema = z.object({
   inPersonPrice: z.number().finite().nonnegative().nullable().optional(),
 });
 const pageSchema = z.object({
-  products: z.array(productSchema),
+  products: z.array(productSchema.extend({ categories: categoriesSchema })),
   pagination: z.object({
     page: id,
     limit: id,
@@ -22,7 +22,6 @@ const pageSchema = z.object({
     hasPreviousPage: z.boolean(),
   }),
 });
-const detailSchema = z.object({ id, categories: categoriesSchema });
 export const catalogProductSchema = productSchema.extend({
   image: z.string(),
   currency: z.literal("USD"),
@@ -70,14 +69,12 @@ export async function request<T>(
     clearTimeout(timer);
   }
 }
-export { categoriesSchema, detailSchema, pageSchema };
+export { categoriesSchema, pageSchema };
 export type ProductPage = z.infer<typeof pageSchema>;
-export type ProductDetail = z.infer<typeof detailSchema>;
 
 export function completeCatalog(
   categories: CatalogSnapshot["categories"],
   pages: ProductPage[],
-  details: ProductDetail[],
 ): CatalogSnapshot | undefined {
   const first = pages[0];
   if (!first) return undefined;
@@ -97,30 +94,21 @@ export function completeCatalog(
     products.length !== totalItems ||
     new Set(products.map((product) => product.id)).size !== totalItems ||
     categoryIds.size !== categories.length ||
-    details.length !== products.length ||
-    details.some(
-      (detail, index) =>
-        detail.id !== products.at(index)?.id ||
-        detail.categories.some(
-          (category) => !categoryIds.has(category.categoryId),
-        ),
+    products.some((product) =>
+      product.categories.some(
+        (category) => !categoryIds.has(category.categoryId),
+      ),
     )
   )
     return undefined;
   return {
     categories,
-    products: products.map((product, index) => ({
+    products: products.map(({ categories: membership, ...product }) => ({
       ...product,
       image: imageUrl(product.image),
       currency: "USD",
       categoryIds: [
-        ...new Set(
-          details
-            .slice(index, index + 1)
-            .flatMap((detail) =>
-              detail.categories.map((category) => category.categoryId),
-            ),
-        ),
+        ...new Set(membership.map((category) => category.categoryId)),
       ],
     })),
   };
