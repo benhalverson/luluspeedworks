@@ -8,6 +8,7 @@ import {
 import { recoveryStorage } from "../src/storefront/agent-recovery";
 import { readAgentStream } from "../src/storefront/agent-stream";
 import { createCatalogController } from "../src/storefront/controller";
+import { bindingFixture } from "./agent-binding-fixtures";
 import { agentFixture } from "./agent-fixtures";
 import { testClient } from "./query-client";
 
@@ -27,6 +28,7 @@ let bodies: {
   runId: string;
   uiRevision: number;
   cart?: { id: string; revision: number };
+  uiContract?: string;
 }[];
 let runResponse:
   | ((body: (typeof bodies)[number]) => Response | Promise<Response>)
@@ -56,7 +58,11 @@ const orders: AgentEffect = {
 };
 const apply = vi.fn(async (_effects: AgentEffect[]) => {});
 const refresh = vi.fn(async () => {});
-function stream(body: (typeof bodies)[number], values = effects) {
+function stream(
+  body: (typeof bodies)[number],
+  values = effects,
+  bindings = false,
+) {
   const correlation = { runId: body.runId, uiRevision: body.uiRevision };
   const events = [
     {
@@ -82,8 +88,11 @@ function stream(body: (typeof bodies)[number], values = effects) {
     },
     {
       type: "CUSTOM",
-      name: "lulu.a2ui.v1",
-      value: { ...agentFixture, ...correlation },
+      name: bindings ? "lulu.a2ui.v2" : "lulu.a2ui.v1",
+      value: {
+        ...(bindings ? bindingFixture() : agentFixture),
+        ...correlation,
+      },
     },
     {
       type: "RUN_FINISHED",
@@ -211,10 +220,8 @@ it("retains original identity across lost stream, reload, running status and ter
   first.agent.dispose();
   runResponse = (body) =>
     Response.json({
-      ...body,
-      cart: undefined,
-      message: undefined,
-      context: undefined,
+      runId: body.runId,
+      uiRevision: body.uiRevision,
       status: "running",
       reason: null,
     });
@@ -248,6 +255,73 @@ it("retains original identity across lost stream, reload, running status and ter
   await second.agent.send("new request");
   expect(bodies[3]?.runId).not.toBe(original?.runId);
   second.agent.dispose();
+});
+
+it("recovers a persisted v1 request unchanged before negotiating v2 for new work", async () => {
+  const runId = crypto.randomUUID();
+  const legacy = {
+    runId,
+    uiRevision: 12,
+    message: "Earlier v1 request",
+    context: [],
+    cart: { id: cartId, revision: 4 },
+  };
+  const body = JSON.stringify(legacy);
+  recoveryStorage(origin, "alice").write({
+    runId,
+    uiRevision: 12,
+    session,
+    body,
+    message: legacy.message,
+    access,
+  });
+  runResponse = (request) =>
+    Response.json({
+      runId: request.runId,
+      uiRevision: request.uiRevision,
+      status: "completed",
+      reason: null,
+    });
+  const { agent, browse } = create();
+  await agent.send("New request typed after upgrade");
+  expect(bodies[0]).toEqual(legacy);
+  const posts = vi
+    .mocked(fetch)
+    .mock.calls.filter(([url]) => String(url).endsWith("/runs"));
+  expect(posts[0]?.[1]?.body).toBe(body);
+  expect(browse).not.toHaveBeenCalled();
+  expect(recoveryStorage(origin, "alice").read()).toBeUndefined();
+  runResponse = undefined;
+  await agent.send("New request typed after upgrade");
+  expect(bodies[1]?.uiContract).toBe("lulu.a2ui.v2");
+  expect(bodies[1]?.runId).not.toBe(runId);
+  agent.dispose();
+});
+
+it("retains validated selection, cart and owned-order effects alongside bound guidance", async () => {
+  effects = [selected, applied, orders];
+  runResponse = (body) => stream(body, effects, true);
+  const { agent, browse } = create();
+  await agent.send("Review my selected items and orders");
+  expect(apply).toHaveBeenCalledWith(effects);
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(browse).toHaveBeenCalledOnce();
+  expect(browse).toHaveBeenCalledWith(
+    expect.objectContaining({
+      messages: [
+        expect.objectContaining({
+          updateDataModel: expect.objectContaining({ path: "/agentCatalog" }),
+        }),
+        expect.objectContaining({
+          updateComponents: expect.objectContaining({
+            surfaceId: "storefront",
+          }),
+        }),
+      ],
+    }),
+  );
+  expect(recoveryStorage(origin, "alice").read()).toBeUndefined();
+  agent.dispose();
 });
 
 it.each([401, 403, 409, 410])(

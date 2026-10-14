@@ -111,20 +111,28 @@ export function createCatalogController(
     apply(batch) {
       // Keep direct category navigation in the trusted shell. The server may
       // compose and order the validated browse/focus nodes, never purchase UI.
-      const messages = batch.messages.map((message) => ({
-        ...message,
-        updateComponents: {
-          ...message.updateComponents,
-          components: message.updateComponents.components.map((node) =>
-            node.component === "ProductRail"
-              ? {
-                  ...node,
-                  controls: ["category-all", "category-rc", "category-pit"],
-                }
-              : node,
-          ),
-        },
-      }));
+      const messages = batch.messages.map((message) =>
+        "updateDataModel" in message
+          ? message
+          : {
+              ...message,
+              updateComponents: {
+                ...message.updateComponents,
+                components: message.updateComponents.components.map((node) =>
+                  node.component === "ProductRail"
+                    ? {
+                        ...node,
+                        controls: [
+                          "category-all",
+                          "category-rc",
+                          "category-pit",
+                        ],
+                      }
+                    : node,
+                ),
+              },
+            },
+      );
       processor.processMessages(messages);
       composed = true;
     },
