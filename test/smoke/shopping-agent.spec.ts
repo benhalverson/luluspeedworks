@@ -1,5 +1,52 @@
+import type { AgentEffect } from "../../src/storefront/agent-commerce";
 import { agentFixture } from "../agent-fixtures";
-import { checkLayout, expect, test } from "./fixtures";
+import { order } from "../order-fixtures";
+import { checkLayout, deferred, expect, test } from "./fixtures";
+
+function completedAgentStream(
+  sessionId: string,
+  runId: string,
+  uiRevision: number,
+  result: AgentEffect,
+) {
+  const batch = structuredClone(agentFixture);
+  for (const message of batch.messages)
+    for (const node of message.updateComponents.components) {
+      if ("image" in node) node.image = "";
+      if ("src" in node) node.src = "";
+    }
+  return [
+    {
+      type: "RUN_STARTED",
+      threadId: sessionId,
+      runId,
+      metadata: { uiRevision },
+    },
+    {
+      type: "CUSTOM",
+      name: "lulu.progress.v1",
+      value: { runId, uiRevision, stage: "admission", invocation: 0 },
+    },
+    {
+      type: "CUSTOM",
+      name: "kind" in result ? "lulu.commerce.v1" : "lulu.cart.v1",
+      value: { runId, uiRevision, result },
+    },
+    {
+      type: "CUSTOM",
+      name: "lulu.a2ui.v1",
+      value: { ...batch, runId, uiRevision },
+    },
+    {
+      type: "RUN_FINISHED",
+      threadId: sessionId,
+      runId,
+      result: { uiRevision, status: "completed" },
+    },
+  ]
+    .map((frame) => `data: ${JSON.stringify(frame)}\n\n`)
+    .join("");
+}
 
 for (const reason of [
   "inference_unavailable",
@@ -364,7 +411,7 @@ test("lost requests recover the same run before allowing another request", async
   await checkLayout(page);
 });
 
-test("validated agent selections retain keyboard controls and checkout needs explicit review", async ({
+test("agent checkout rereads the authoritative quote before explicit confirmation", async ({
   page,
   api,
 }) => {
@@ -372,12 +419,39 @@ test("validated agent selections retain keyboard controls and checkout needs exp
   const filamentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const quoteId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   const sessionId = "73f4ebed-0967-4112-8484-ed0263749e61";
+  const line = {
+    id: 1,
+    productId: "SMOKE-1",
+    name: "Smoke part",
+    quantity: 3,
+    color: "red",
+    filamentType: "PLA",
+    filamentId,
+    price: 2.29,
+  };
   api.responses.set("POST /cart/create", {
     body: { cartId, ownerId: "admin" },
   });
-  api.responses.set(`GET /cart/${cartId}`, { body: { items: [], total: 0 } });
+  api.responses.set(`GET /cart/${cartId}`, {
+    body: { items: [line], total: 6.87 },
+  });
   api.responses.set(`GET /cart/${cartId}/agent-state`, {
-    body: { cartId, revision: 0, items: [] },
+    body: {
+      cartId,
+      revision: 4,
+      items: [
+        {
+          id: line.id,
+          productId: 1,
+          name: line.name,
+          quantity: line.quantity,
+          filamentId,
+          color: line.color,
+          material: line.filamentType,
+          unitPrice: line.price,
+        },
+      ],
+    },
   });
   api.responses.set("GET /v2/colors", {
     body: {
@@ -393,10 +467,40 @@ test("validated agent selections retain keyboard controls and checkout needs exp
       ],
     },
   });
-  api.responses.set(`GET /shipping-quotes/${quoteId}`, {
-    status: 410,
-    body: { error: "Expired" },
-  });
+  const quoteRead = deferred<{ body: unknown }>();
+  api.responses.set(`GET /cart/${cartId}/quotes/${quoteId}`, quoteRead.promise);
+  const checkoutSubmissions: { quoteId: string; requestKey: string }[] = [];
+  await page.route(
+    `https://api.lulu.test/cart/${cartId}/checkout`,
+    async (route) => {
+      const submission = route.request().postDataJSON();
+      checkoutSubmissions.push(submission);
+      expect(route.request().method()).toBe("POST");
+      api.responses.set(`POST /cart/${cartId}/checkout`, {
+        body: {
+          attemptId: sessionId,
+          quoteId,
+          state: "initiating",
+          paymentUrl: "https://square.link/u/fixture",
+          squareOrderId: "square-fixture",
+        },
+      });
+      api.responses.set(
+        `GET /checkout-attempts/by-request-key/${submission.requestKey}`,
+        {
+          body: {
+            attemptId: sessionId,
+            quoteId,
+            cartId,
+            state: "pending",
+            paymentUrl: "https://square.link/u/fixture",
+            order: null,
+          },
+        },
+      );
+      await route.fallback();
+    },
+  );
   let count = 0;
   await page.route("https://api.lulu.test/agent/**", async (route) => {
     if (route.request().url().endsWith("/sessions"))
@@ -412,7 +516,7 @@ test("validated agent selections retain keyboard controls and checkout needs exp
       return route.fulfill({ json: {} });
     const { runId, uiRevision } = route.request().postDataJSON();
     count++;
-    const result =
+    const result: AgentEffect =
       count === 1
         ? {
             status: "selected",
@@ -439,46 +543,9 @@ test("validated agent selections retain keyboard controls and checkout needs exp
               confirmationRequired: true,
             },
           };
-    const batch = structuredClone(agentFixture);
-    for (const message of batch.messages)
-      for (const node of message.updateComponents.components) {
-        if ("image" in node) node.image = "";
-        if ("src" in node) node.src = "";
-      }
-    const frames = [
-      {
-        type: "RUN_STARTED",
-        threadId: sessionId,
-        runId,
-        metadata: { uiRevision },
-      },
-      {
-        type: "CUSTOM",
-        name: "lulu.progress.v1",
-        value: { runId, uiRevision, stage: "admission", invocation: 0 },
-      },
-      {
-        type: "CUSTOM",
-        name: count === 1 ? "lulu.cart.v1" : "lulu.commerce.v1",
-        value: { runId, uiRevision, result },
-      },
-      {
-        type: "CUSTOM",
-        name: "lulu.a2ui.v1",
-        value: { ...batch, runId, uiRevision },
-      },
-      {
-        type: "RUN_FINISHED",
-        threadId: sessionId,
-        runId,
-        result: { uiRevision, status: "completed" },
-      },
-    ];
     await route.fulfill({
       contentType: "text/event-stream",
-      body: frames
-        .map((frame) => `data: ${JSON.stringify(frame)}\n\n`)
-        .join(""),
+      body: completedAgentStream(sessionId, runId, uiRevision, result),
     });
   });
   await page.goto("/products/1");
@@ -496,8 +563,211 @@ test("validated agent selections retain keyboard controls and checkout needs exp
   await expect(
     page.getByRole("heading", { name: "Shipping and checkout review" }),
   ).toBeVisible();
+  await expect(page).toHaveURL(`/checkout?quoteId=${quoteId}&cartId=${cartId}`);
+  await expect(page.getByText("Checking prices and shipping…")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Continue to Square/ }),
+  ).toHaveCount(0);
+  await expect(page.getByText("$5.58", { exact: true })).toHaveCount(0);
+  expect(checkoutSubmissions).toEqual([]);
+  quoteRead.resolve({
+    body: {
+      id: quoteId,
+      cartId,
+      currency: "USD",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 900000,
+      status: "valid",
+      address: {
+        name: "Smoke Admin",
+        line1: "123 Example Avenue",
+        line2: "",
+        city: "Portland",
+        state: "OR",
+        zip: "97201",
+        country: "US",
+      },
+      lines: [
+        {
+          cartItemId: line.id,
+          name: line.name,
+          skuNumber: line.productId,
+          quantity: line.quantity,
+          filamentType: line.filamentType,
+          filamentId,
+          color: line.color,
+          unitAmountCents: 229,
+          totalAmountCents: 687,
+        },
+      ],
+      subtotalCents: 687,
+      shippingCents: 213,
+      totalCents: 900,
+    },
+  });
+  const confirm = page.getByRole("button", {
+    name: "Continue to Square — $9.00 USD",
+  });
+  await expect(confirm).toBeEnabled();
+  await expect(page.getByText("$9.00", { exact: true })).toBeVisible();
+  await expect(page.getByText("$2.13", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Smoke part · 3 ×/)).toContainText("red");
+  await expect(page.getByText(/Ship to:/)).toContainText("123 Example Avenue");
+  await expect(page.getByText("$5.58", { exact: true })).toHaveCount(0);
+  expect(api.requests).toContain(`GET /cart/${cartId}/quotes/${quoteId}`);
   expect(
-    api.requests.filter((request) => request.startsWith("POST /checkout")),
+    api.requests.filter(
+      (request) =>
+        request.startsWith("POST ") && /checkout|quotes/.test(request),
+    ),
   ).toEqual([]);
+  expect(checkoutSubmissions).toEqual([]);
+  await confirm.focus();
+  await expect(confirm).toBeFocused();
+  await checkLayout(page);
+  await confirm.press("Enter");
+  await expect(page.getByText(/Payment is pending/)).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Continue this checkout with Square" }),
+  ).toHaveAttribute("href", "https://square.link/u/fixture");
+  expect(checkoutSubmissions).toEqual([
+    { quoteId, requestKey: expect.stringMatching(/^[0-9a-f-]{36}$/) },
+  ]);
+  expect(
+    api.requests.filter(
+      (request) => request === `POST /cart/${cartId}/checkout`,
+    ),
+  ).toHaveLength(1);
+});
+
+test("agent order links display freshly verified order facts instead of streamed facts", async ({
+  page,
+  api,
+}) => {
+  const cartId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const sessionId = "73f4ebed-0967-4112-8484-ed0263749e61";
+  api.responses.set("POST /cart/create", {
+    body: { cartId, ownerId: "admin" },
+  });
+  api.responses.set(`GET /cart/${cartId}`, { body: { items: [], total: 0 } });
+  api.responses.set(`GET /cart/${cartId}/agent-state`, {
+    body: { cartId, revision: 0, items: [] },
+  });
+  const orderRead = deferred<{ body: unknown }>();
+  api.responses.set("GET /orders/1", orderRead.promise);
+  await page.route("https://api.lulu.test/agent/**", async (route) => {
+    if (route.request().url().endsWith("/sessions"))
+      return route.fulfill({
+        json: {
+          sessionId,
+          capability: "fixture",
+          expiresAt: 9e12,
+          absoluteExpiresAt: 9e12,
+        },
+      });
+    if (route.request().url().endsWith("/cancel"))
+      return route.fulfill({ json: {} });
+    expect(route.request().headers()["x-expected-account-id"]).toBe("admin");
+    const { runId, uiRevision } = route.request().postDataJSON();
+    await route.fulfill({
+      contentType: "text/event-stream",
+      body: completedAgentStream(sessionId, runId, uiRevision, {
+        kind: "owned_orders",
+        accountId: "admin",
+        status: "known",
+        policy: "unknown",
+        orders: [
+          {
+            id: 1,
+            orderNumber: "STALE-AGENT-ORDER",
+            paymentStatus: "paid",
+            fulfillmentState: "processed",
+            status: "delivered",
+            totalAmountCents: 123,
+            currency: "USD",
+            shippedAt: "2026-09-22",
+            deliveredAt: "2026-09-25",
+            refund: null,
+          },
+        ],
+      }),
+    });
+  });
+  await page.goto("/");
+  const request = page.waitForRequest("https://api.lulu.test/orders/1");
+  await page
+    .getByRole("textbox", { name: "YOUR SHOPPING REQUEST" })
+    .fill("Where is my order?");
+  await page.getByRole("button", { name: "Send shopping request" }).click();
+  const ownedRead = await request;
+  expect(ownedRead.method()).toBe("GET");
+  expect(ownedRead.headers()["x-expected-account-id"]).toBe("admin");
+  await expect(page).toHaveURL("/orders/1");
+  await expect(page.getByText("Loading your orders…")).toBeVisible();
+  await expect(
+    page.getByText("STALE-AGENT-ORDER", { exact: false }),
+  ).toHaveCount(0);
+  await expect(page.getByText("$1.23", { exact: true })).toHaveCount(0);
+  orderRead.resolve({
+    body: {
+      ...order,
+      accountId: "admin",
+      orderNumber: "FRESH-OWNED-ORDER",
+      status: "pending",
+      paymentStatus: "pending",
+      fulfillmentState: "ready",
+      totalAmountCents: 4500,
+      fulfillment: {
+        ...order.fulfillment,
+        trackingNumber: "FRESH-TRACKING",
+        trackingUrl: "https://carrier.example/track/fresh",
+        shippedAt: null,
+        deliveredAt: null,
+      },
+    },
+  });
+  await expect(
+    page.getByRole("heading", { name: "Order FRESH-OWNED-ORDER" }),
+  ).toBeVisible();
+  await expect(page.getByText("$45.00", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Order status: pending", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Payment: pending", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Fulfillment: Awaiting fulfillment", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Tracking: FRESH-TRACKING", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Shipped: Not available", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Delivered: Not available", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Track shipment" }),
+  ).toHaveAttribute("href", "https://carrier.example/track/fresh");
+  await expect(
+    page.getByText("STALE-AGENT-ORDER", { exact: false }),
+  ).toHaveCount(0);
+  await expect(page.getByText("$1.23", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Payment: paid", { exact: true })).toHaveCount(0);
+  expect(
+    api.requests.filter((request) => request === "GET /orders/1"),
+  ).toHaveLength(1);
+  expect(
+    api.requests.filter(
+      (request) =>
+        request.startsWith("POST ") && /checkout|quotes/.test(request),
+    ),
+  ).toEqual([]);
+  await page.getByRole("link", { name: "Back to orders" }).focus();
+  await expect(
+    page.getByRole("link", { name: "Back to orders" }),
+  ).toBeFocused();
   await checkLayout(page);
 });
