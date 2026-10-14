@@ -56,6 +56,9 @@ type Quote = {
   expiresAt: number;
   status: "valid" | "stale" | "expired";
 };
+type PaymentAction =
+  | { kind: "confirm"; quote: Quote }
+  | { kind: "retry" | "clear"; requestKey: string };
 
 /** Corrupt hints block replacement: never silently generate a second request identity. */
 function decode(value: string): StoredAttempt {
@@ -67,7 +70,11 @@ function decode(value: string): StoredAttempt {
 }
 
 /** Only authenticated, correlated server reads establish an outcome; a redirect is never evidence. */
-async function readOutcome(saved: SavedAttempt, signal?: AbortSignal) {
+async function readOutcome(
+  saved: SavedAttempt,
+  assertCurrent: () => void,
+  signal?: AbortSignal,
+) {
   const response = await fetch(
     new URL(`/checkout-attempts/by-request-key/${saved.requestKey}`, apiOrigin),
     {
@@ -78,6 +85,7 @@ async function readOutcome(saved: SavedAttempt, signal?: AbortSignal) {
         : AbortSignal.timeout(20_000),
     },
   );
+  assertCurrent();
   if ([401, 403].includes(response.status))
     window.dispatchEvent(new Event(`lulu-cart-expired:${apiOrigin}`));
   if (!response.ok)
@@ -106,24 +114,29 @@ export function useCheckoutPayment(userId: string) {
       visit.current += 1;
     };
   }, []);
+  /** Capture the visit before waiting; late requests cannot expire a later session. */
+  function ownResponse() {
+    const owner = visit.current;
+    return () => {
+      if (visit.current !== owner)
+        throw new Error(
+          "Return to checkout and verify your account before continuing.",
+        );
+    };
+  }
   const mutation = useMutation({
     retry: false,
     onSettled: () =>
       queryClient.invalidateQueries({
         queryKey: ["checkout-outcome", apiOrigin, userId],
       }),
-    mutationFn: async (
-      input:
-        | { kind: "confirm"; quote: Quote }
-        | { kind: "retry" | "clear"; requestKey: string },
-    ) => {
-      const owner = visit.current;
-      const assertCurrent = () => {
-        if (visit.current !== owner)
-          throw new Error(
-            "Return to checkout and verify your account before continuing.",
-          );
-      };
+    mutationFn: async ({
+      input,
+      assertCurrent,
+    }: {
+      input: PaymentAction;
+      assertCurrent: () => void;
+    }) => {
       if (!navigator.locks)
         throw new Error(
           "Checkout requires a browser with secure cross-tab locks.",
@@ -138,7 +151,7 @@ export function useCheckoutPayment(userId: string) {
         if (input.kind === "clear") {
           if (!current || current.requestKey !== input.requestKey)
             throw new Error("The saved checkout changed. Refresh its outcome.");
-          const outcome = await readOutcome(current);
+          const outcome = await readOutcome(current, assertCurrent);
           assertCurrent();
           if (outcome.state !== "paid")
             throw new Error(
@@ -192,6 +205,7 @@ export function useCheckoutPayment(userId: string) {
             signal: AbortSignal.timeout(20_000),
           },
         );
+        assertCurrent();
         if ([401, 403].includes(response.status))
           window.dispatchEvent(new Event(`lulu-cart-expired:${apiOrigin}`));
         if (!response.ok)
@@ -207,7 +221,8 @@ export function useCheckoutPayment(userId: string) {
   const attempt = saved && saved !== "invalid" ? saved : null;
   const outcome = useQuery({
     queryKey: ["checkout-outcome", apiOrigin, userId, attempt?.requestKey],
-    queryFn: ({ signal }) => readOutcome(savedSchema.parse(attempt), signal),
+    queryFn: ({ signal }) =>
+      readOutcome(savedSchema.parse(attempt), ownResponse(), signal),
     enabled: Boolean(attempt) && !mutation.isPending,
     retry: false,
     staleTime: 0,
@@ -217,7 +232,14 @@ export function useCheckoutPayment(userId: string) {
     saved,
     attempt,
     outcome,
-    mutation,
+    mutation: {
+      isPending: mutation.isPending,
+      isError: mutation.isError,
+      /** Own queued work from the explicit click, before mutation scheduling can yield. */
+      mutate(input: PaymentAction) {
+        mutation.mutate({ input, assertCurrent: ownResponse() });
+      },
+    },
     blocked: saved !== null || mutation.isPending,
   };
 }

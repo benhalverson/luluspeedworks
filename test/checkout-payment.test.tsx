@@ -1,5 +1,7 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useCartSessionRecovery } from "../src/storefront/cart-session";
 import {
   PaymentRecovery,
   useCheckoutPayment,
@@ -91,18 +93,15 @@ function seed(value: unknown = saved) {
 function click(name: string) {
   fireEvent.click(screen.getByRole("button", { name }));
 }
+function SessionRecovery({ refresh }: { refresh: () => unknown }) {
+  useCartSessionRecovery("https://api.luluspeedworks.com", refresh);
+  return null;
+}
 beforeEach(() => {
   localStorage.clear();
   response = pending;
   postStatus = 200;
   writes = [];
-  Object.defineProperty(navigator, "locks", {
-    configurable: true,
-    value: {
-      request: async (_key: string, callback: () => Promise<void>) =>
-        callback(),
-    },
-  });
   vi.mocked(fetch).mockImplementation(async (_url, init) => {
     expect(init?.credentials).toBe("include");
     expect(init?.cache).toBe("no-store");
@@ -139,6 +138,30 @@ it("persists one identity before submitting only identifiers and prevents a dupl
   );
   expect(writes).toHaveLength(1);
   expect(JSON.parse(localStorage.getItem(key) ?? "null")).toEqual(stored);
+});
+
+it("serializes overlapping confirmations while the first submission is unresolved", async () => {
+  let finish!: (value: Response) => void;
+  vi.mocked(fetch).mockImplementationOnce((_url, init) => {
+    writes.push(JSON.parse(String(init?.body)));
+    return new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+  });
+  renderWithClient(<Controls />);
+  click("Confirm test quote");
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  const identity = localStorage.getItem(key);
+  click("Confirm test quote");
+  expect(writes).toHaveLength(1);
+  await act(async () => finish(Response.json(initial)));
+  await screen.findByRole("link", {
+    name: "Continue this checkout with Square",
+  });
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(localStorage.getItem(key) ?? "null")).toEqual(
+    JSON.parse(identity ?? "null"),
+  );
 });
 
 it.each(["unknown", "pending", "failed", "cancelled", "paid"])(
@@ -301,6 +324,15 @@ it.each(["invalid-json", "invalid-shape"])(
   },
 );
 
+it("does not submit a confirmation when its visit ends before the mutation starts", async () => {
+  const view = renderWithClient(<Controls />);
+  click("Confirm test quote");
+  view.unmount();
+  await act(async () => {});
+  expect(writes).toEqual([]);
+  expect(localStorage.getItem(key)).toBeNull();
+});
+
 it("refuses initiation when durable storage fails", async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
@@ -446,4 +478,81 @@ it("does not clear a saved attempt when paid verification finishes after leaving
     complete(Response.json({ ...pending, state: "paid", paymentUrl: null })),
   );
   expect(localStorage.getItem(key)).toBe(JSON.stringify(saved));
+});
+
+it.each([
+  ["confirm", 401, "bob"],
+  ["confirm", 403, "alice"],
+  ["clear", 401, "alice"],
+  ["clear", 403, "bob"],
+] as const)(
+  "does not expire a new %s visit after its predecessor returns HTTP %s (account %s)",
+  async (operation, status, nextAccount) => {
+    if (operation === "clear") {
+      seed();
+      response = { ...pending, state: "paid", paymentUrl: null };
+    }
+    const refresh = vi.fn();
+    const view = renderWithClient(
+      <StrictMode>
+        <Controls key="old" />
+        <SessionRecovery refresh={refresh} />
+      </StrictMode>,
+    );
+    if (operation === "clear") await screen.findByText(/Payment confirmed/);
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    click(
+      operation === "confirm" ? "Confirm test quote" : "Start another checkout",
+    );
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    const identity = localStorage.getItem(key);
+    view.rerender(
+      <StrictMode>
+        <Controls key="new" userId={nextAccount} />
+        <SessionRecovery refresh={refresh} />
+      </StrictMode>,
+    );
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => finish(Response.json({}, { status })));
+    expect(refresh).not.toHaveBeenCalled();
+    expect(localStorage.getItem(key)).toBe(identity);
+    expect(localStorage.getItem(key.replace("alice", "bob"))).toBeNull();
+  },
+);
+
+it("ignores a cancelled outcome read that finishes with denial after changing account", async () => {
+  seed();
+  let finish!: (response: Response) => void;
+  let signal: AbortSignal | undefined;
+  vi.mocked(fetch).mockImplementationOnce((_url, init) => {
+    signal = init?.signal ?? undefined;
+    return new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+  });
+  const refresh = vi.fn();
+  const view = renderWithClient(
+    <>
+      <Controls key="alice" />
+      <SessionRecovery refresh={refresh} />
+    </>,
+  );
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  view.rerender(
+    <>
+      <Controls key="bob" userId="bob" />
+      <SessionRecovery refresh={refresh} />
+    </>,
+  );
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish(Response.json({}, { status: 401 })));
+  expect(refresh).not.toHaveBeenCalled();
+  expect(localStorage.getItem(key)).toBe(JSON.stringify(saved));
+  expect(writes).toEqual([]);
 });
