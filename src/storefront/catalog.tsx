@@ -1,8 +1,14 @@
 import { createComponentImplementation } from "@a2ui/react/v0_9";
 import { Catalog, CommonSchemas, componentId } from "@a2ui/web_core/v0_9";
 import * as Dialog from "@radix-ui/react-dialog";
-import { useState } from "react";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { type ReactNode, useState } from "react";
+import {
+  Link,
+  matchPath,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router";
 import { z } from "zod";
 import { BrandLink } from "../components/brand-link";
 import { Button } from "../components/ui/button";
@@ -33,6 +39,25 @@ function AccountDialog() {
   );
 }
 
+/** Open accepted cart destinations while preserving product-page bag controls. */
+function BagDialog({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const cartRoute = Boolean(matchPath("/cart", pathname));
+  const [open, setOpen] = useState(false);
+  return (
+    <Dialog.Root
+      open={cartRoute || open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (cartRoute) navigate("/");
+      }}
+    >
+      {children}
+    </Dialog.Root>
+  );
+}
+
 /**
  * Converts A2UI child references to arguments for `buildChild(id, basePath)`.
  * Static children use string IDs; repeated entries include a `basePath`
@@ -57,7 +82,7 @@ const PitBench = createComponentImplementation(
     }),
   },
   ({ props, buildChild }) => (
-    <Dialog.Root>
+    <BagDialog>
       <div className="mx-auto min-h-dvh max-w-[1550px] px-4.5 tablet:px-[4%]">
         <a
           className="absolute -top-25 left-4 z-10 bg-primary p-3 text-primary-foreground focus:top-3"
@@ -93,7 +118,7 @@ const PitBench = createComponentImplementation(
           </p>
         </footer>
       </div>
-    </Dialog.Root>
+    </BagDialog>
   ),
 );
 
