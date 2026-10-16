@@ -10,7 +10,7 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 import { createShoppingAgent } from "../src/storefront/agent";
-import { batchSchema } from "../src/storefront/agent-contract";
+import { batchSchema } from "../src/storefront/agent-bindings";
 import { readAgentStream } from "../src/storefront/agent-stream";
 import { createCatalogController } from "../src/storefront/controller";
 import { agentFixture } from "./agent-fixtures";
@@ -54,14 +54,14 @@ function events(run = expected, reason?: string) {
       runId: run.runId,
       metadata: { uiRevision: run.uiRevision },
     },
-    custom("lulu.progress.v1", {
+    custom("lulu.progress", {
       ...correlation,
       stage: "admission",
       invocation: 0,
     }),
     reason
-      ? custom("lulu.fallback.v1", { ...correlation, reason })
-      : custom("lulu.a2ui.v1", { ...agentFixture, ...correlation }),
+      ? custom("lulu.fallback", { ...correlation, reason })
+      : custom("lulu.a2ui", { ...agentFixture, ...correlation }),
     {
       type: "RUN_FINISHED",
       threadId: session.sessionId,
@@ -344,6 +344,33 @@ it.each([
   ["late progress", () => [...events().slice(0, 3), events()[1], events()[3]]],
   ["event after completion", () => [...events(), events()[1]]],
   ["unknown event", () => [events()[0], custom("unsafe", {})]],
+  [
+    "removed v1 event",
+    () => [
+      ...events().slice(0, 2),
+      custom("lulu.a2ui.v1", agentFixture),
+      events()[3],
+    ],
+  ],
+  [
+    "removed v2 event",
+    () => [
+      ...events().slice(0, 2),
+      custom("lulu.a2ui.v2", agentFixture),
+      events()[3],
+    ],
+  ],
+  [
+    "literal-only batch",
+    () => [
+      ...events().slice(0, 2),
+      custom("lulu.a2ui", {
+        ...agentFixture,
+        messages: [agentFixture.messages[1]],
+      }),
+      events()[3],
+    ],
+  ],
   ["wrong revision", () => events({ ...expected, uiRevision: 99 })],
   ["wrong run", () => events({ ...expected, runId: crypto.randomUUID() })],
   ["completion without output", () => [events()[0], events()[3]]],
@@ -392,7 +419,7 @@ it.each([
   "root",
 ])("rejects an unsafe %s before updating any UI", async (kind) => {
   const batch = structuredClone(agentFixture);
-  const nodes = batch.messages[0]?.updateComponents.components;
+  const nodes = batch.messages[1]?.updateComponents.components;
   const rail = nodes?.[0];
   const entry = nodes?.[1];
   if (!nodes || !rail || !entry) throw new Error("Missing fixture nodes");
@@ -404,13 +431,14 @@ it.each([
   if (kind === "url") Object.assign(entry, { href: "javascript:alert(1)" });
   if (kind === "reference") Object.assign(rail, { entries: ["agent-missing"] });
   if (kind === "duplicate") nodes.push(entry);
-  if (kind === "unreachable") nodes.push({ ...entry, id: "agent-unused" });
+  if (kind === "unreachable")
+    nodes.push(Object.assign(structuredClone(entry), { id: "agent-unused" }));
   if (kind === "root") nodes.splice(0, 1);
   expect(batchSchema.safeParse(batch).success).toBe(false);
   shoppingFetch((body) =>
     response([
       events(body)[0],
-      custom("lulu.a2ui.v1", {
+      custom("lulu.a2ui", {
         ...batch,
         runId: body.runId,
         uiRevision: body.uiRevision,
@@ -1044,7 +1072,7 @@ it.each([
       response([
         values[0],
         ...progress.map((value) =>
-          custom("lulu.progress.v1", {
+          custom("lulu.progress", {
             ...expected,
             ...value,
             sessionId: undefined,
@@ -1059,7 +1087,7 @@ it.each([
 it("accepts consecutive inference progress and rejects a reason on successful completion", async () => {
   const values = events();
   const progress = [1, 2, 3].map((invocation) =>
-    custom("lulu.progress.v1", {
+    custom("lulu.progress", {
       runId: expected.runId,
       uiRevision: expected.uiRevision,
       stage: "inference",
@@ -1203,7 +1231,7 @@ it("rejects a next-invocation progress event after the outcome", async () => {
     parse(
       response([
         ...events().slice(0, 3),
-        custom("lulu.progress.v1", {
+        custom("lulu.progress", {
           runId: expected.runId,
           uiRevision: expected.uiRevision,
           stage: "inference",

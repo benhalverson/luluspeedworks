@@ -1,9 +1,44 @@
+import type { z } from "zod";
+import type { batchSchema } from "../src/storefront/agent-bindings";
 // Pinned API contract from 3dprinter-farm docs/shopping-agent-fixtures.json.
 export const agentFixture = {
   runId: "cbbe9c31-c30d-46e4-acbe-c6a05e50be9c",
   uiRevision: 12,
   catalogId: "https://luluspeedworks.com/catalog/scaffold/v1",
   messages: [
+    {
+      version: "v0.9.1",
+      updateDataModel: {
+        surfaceId: "storefront",
+        path: "/agentCatalog",
+        value: {
+          products: {
+            "1": {
+              id: 1,
+              name: "Pit tray",
+              description: "Organize small parts.",
+              image: "https://photos.example/tray.jpg",
+              price: "$12.50",
+              sku: "TRAY",
+              href: "/products/1",
+              compatibility:
+                "Compatibility is not supplied by this catalog. Verify fit before purchasing.",
+            },
+            "2": {
+              id: 2,
+              name: "Fan mount",
+              description: "A printed mount.",
+              image: "",
+              price: "$7.00",
+              sku: "MOUNT",
+              href: "/products/2",
+              compatibility:
+                "Compatibility is not supplied by this catalog. Verify fit before purchasing.",
+            },
+          },
+        },
+      },
+    },
     {
       version: "v0.9.1",
       updateComponents: {
@@ -39,20 +74,40 @@ export const agentFixture = {
           {
             id: "agent-one",
             component: "ProductEntry",
-            name: "Pit tray",
-            description: "Organize small parts.",
-            price: "$12.50",
-            image: "https://photos.example/tray.jpg",
-            href: "/products/1",
+            name: {
+              path: "/agentCatalog/products/1/name",
+            },
+            description: {
+              path: "/agentCatalog/products/1/description",
+            },
+            price: {
+              path: "/agentCatalog/products/1/price",
+            },
+            image: {
+              path: "/agentCatalog/products/1/image",
+            },
+            href: {
+              path: "/agentCatalog/products/1/href",
+            },
           },
           {
             id: "agent-two",
             component: "ProductEntry",
-            name: "Fan mount",
-            description: "A printed mount.",
-            price: "$7.00",
-            image: "",
-            href: "/products/2",
+            name: {
+              path: "/agentCatalog/products/2/name",
+            },
+            description: {
+              path: "/agentCatalog/products/2/description",
+            },
+            price: {
+              path: "/agentCatalog/products/2/price",
+            },
+            image: {
+              path: "/agentCatalog/products/2/image",
+            },
+            href: {
+              path: "/agentCatalog/products/2/href",
+            },
           },
           {
             id: "focus",
@@ -60,15 +115,26 @@ export const agentFixture = {
             title: "Catalog guidance",
             description:
               "Catalog facts are shown below. Compatibility and store policies are not verified.",
-            selectedTitle: "Pit tray",
-            selectedDescription: "Organize small parts.",
-            href: "/products/1",
+            selectedTitle: {
+              path: "/agentCatalog/products/1/name",
+            },
+            selectedDescription: {
+              path: "/agentCatalog/products/1/description",
+            },
+            href: {
+              path: "/agentCatalog/products/1/href",
+            },
             active: true,
             ready: true,
-            price: "$12.50",
-            sku: "TRAY",
-            compatibility:
-              "Compatibility is not supplied by this catalog. Verify fit before purchasing.",
+            price: {
+              path: "/agentCatalog/products/1/price",
+            },
+            sku: {
+              path: "/agentCatalog/products/1/sku",
+            },
+            compatibility: {
+              path: "/agentCatalog/products/1/compatibility",
+            },
             images: ["agent-photo"],
             retryVisible: false,
             retry: {
@@ -80,8 +146,12 @@ export const agentFixture = {
           {
             id: "agent-photo",
             component: "DetailImage",
-            src: "https://photos.example/tray.jpg",
-            name: "Pit tray",
+            src: {
+              path: "/agentCatalog/products/1/image",
+            },
+            name: {
+              path: "/agentCatalog/products/1/name",
+            },
           },
         ],
       },
@@ -92,4 +162,4 @@ export const agentFixture = {
     "Compatibility is not supplied by this catalog. Verify fit before purchasing.",
     "Shipping, returns and other store policies are not supplied by this catalog.",
   ],
-};
+} satisfies z.input<typeof batchSchema>;

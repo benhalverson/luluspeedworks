@@ -10,11 +10,10 @@ function completedAgentStream(
   result: AgentEffect,
 ) {
   const batch = structuredClone(agentFixture);
-  for (const message of batch.messages)
-    for (const node of message.updateComponents.components) {
-      if ("image" in node) node.image = "";
-      if ("src" in node) node.src = "";
-    }
+  for (const product of Object.values(
+    batch.messages[0].updateDataModel.value.products,
+  ))
+    product.image = "";
   return [
     {
       type: "RUN_STARTED",
@@ -24,7 +23,7 @@ function completedAgentStream(
     },
     {
       type: "CUSTOM",
-      name: "lulu.progress.v1",
+      name: "lulu.progress",
       value: { runId, uiRevision, stage: "admission", invocation: 0 },
     },
     {
@@ -34,7 +33,7 @@ function completedAgentStream(
     },
     {
       type: "CUSTOM",
-      name: "lulu.a2ui.v1",
+      name: "lulu.a2ui",
       value: { ...batch, runId, uiRevision },
     },
     {
@@ -84,12 +83,10 @@ for (const reason of [
       requests.push(input);
       expect(request.headers().authorization).toBe("Bearer test-capability");
       const batch = structuredClone(agentFixture);
-      for (const message of batch.messages) {
-        for (const node of message.updateComponents.components) {
-          if ("image" in node) node.image = "";
-          if ("src" in node) node.src = "";
-        }
-      }
+      for (const product of Object.values(
+        batch.messages[0].updateDataModel.value.products,
+      ))
+        product.image = "";
       const correlation = { runId: input.runId, uiRevision: input.uiRevision };
       const events = [
         {
@@ -100,18 +97,18 @@ for (const reason of [
         },
         {
           type: "CUSTOM",
-          name: "lulu.progress.v1",
+          name: "lulu.progress",
           value: { ...correlation, stage: "admission", invocation: 0 },
         },
         fail
           ? {
               type: "CUSTOM",
-              name: "lulu.fallback.v1",
+              name: "lulu.fallback",
               value: { ...correlation, reason },
             }
           : {
               type: "CUSTOM",
-              name: "lulu.a2ui.v1",
+              name: "lulu.a2ui",
               value: { ...batch, ...correlation },
             },
         {

@@ -31,8 +31,9 @@ test("bound guidance covers the initial assortment while preserving direct keybo
           absoluteExpiresAt: 9e12,
         },
       });
-    const { runId, uiRevision, uiContract } = route.request().postDataJSON();
-    expect(uiContract).toBe("lulu.a2ui.v2");
+    const input = route.request().postDataJSON();
+    const { runId, uiRevision } = input;
+    expect(input).not.toHaveProperty("uiContract");
     const product = bindingProducts[index++];
     if (!product) throw Error("Unexpected extra guidance request");
     await route.fulfill({
