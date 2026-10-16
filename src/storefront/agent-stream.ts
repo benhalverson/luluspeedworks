@@ -1,15 +1,10 @@
-import {
-  type AgentBatch,
-  bindingBatchSchema,
-  bindingContract,
-} from "./agent-bindings";
+import { type AgentBatch, batchSchema } from "./agent-bindings";
 import {
   type AgentEffect,
   cartEventSchema,
   commerceEventSchema,
 } from "./agent-commerce";
 import {
-  batchSchema,
   eventSchema,
   fallbackEventSchema,
   progressSchema,
@@ -83,7 +78,7 @@ export async function readAgentStream(
       )
         throw new Error("Invalid completion");
       finished = true;
-    } else if (event.name === "lulu.progress.v1") {
+    } else if (event.name === "lulu.progress") {
       const value = progressSchema.parse(event.value);
       match(value);
       if (
@@ -104,15 +99,10 @@ export async function readAgentStream(
         match(value);
         if (effects.length >= 8) throw Error("Too many shopping effects");
         effects.push(value.result);
-      } else if (
-        event.name === "lulu.a2ui.v1" ||
-        event.name === bindingContract
-      ) {
-        batch = (
-          event.name === bindingContract ? bindingBatchSchema : batchSchema
-        ).parse(event.value);
+      } else if (event.name === "lulu.a2ui") {
+        batch = batchSchema.parse(event.value);
         match(batch);
-      } else if (event.name === "lulu.fallback.v1") {
+      } else if (event.name === "lulu.fallback") {
         const fallback = fallbackEventSchema.parse(event.value);
         match(fallback);
         reason = fallback.reason;

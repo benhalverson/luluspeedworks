@@ -1,5 +1,5 @@
 import { type QueryClient, QueryObserver } from "@tanstack/react-query";
-import { type AgentBatch, bindingContract } from "./agent-bindings";
+import type { AgentBatch } from "./agent-bindings";
 import {
   type AgentAccess,
   type AgentCommerce,
@@ -386,7 +386,6 @@ function serializeRequest(
       uiRevision,
       message,
       context,
-      uiContract: bindingContract,
       ...commerce,
     });
   let body = serialize();

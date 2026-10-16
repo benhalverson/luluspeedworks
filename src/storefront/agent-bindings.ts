@@ -1,13 +1,7 @@
 import { z } from "zod";
-import {
-  agentNodeSchema,
-  batchSchema,
-  correlation,
-  type LiteralAgentBatch,
-} from "./agent-contract";
+import { correlation } from "./agent-contract";
 import { surfaceId, wireVersion } from "./messages";
 
-export const bindingContract = "lulu.a2ui.v2";
 const prefix = "/agentCatalog/products/";
 const fitUnknown =
   "Compatibility is not supplied by this catalog. Verify fit before purchasing.";
@@ -18,27 +12,66 @@ const binding = (field: string) =>
       path: z.string().regex(new RegExp(`^${prefix}[1-9]\\d*/${field}$`)),
     })
     .strict();
+const text = z.string().max(8192);
+const leafId = z.string().regex(/^agent-[a-z0-9-]{1,40}$/);
+/** Permit only the named trusted shell action, without model-provided arguments. */
+const action = <T extends string>(name: T) =>
+  z.object({ event: z.object({ name: z.literal(name) }).strict() }).strict();
 const nodes = z.discriminatedUnion("component", [
-  agentNodeSchema.options[0],
-  agentNodeSchema.options[1].extend({
-    name: binding("name"),
-    description: binding("description"),
-    image: binding("image"),
-    price: binding("price"),
-    href: binding("href"),
-  }),
-  agentNodeSchema.options[2].extend({
-    selectedTitle: z.union([z.literal(""), binding("name")]),
-    selectedDescription: z.union([z.literal(""), binding("description")]),
-    href: z.union([z.literal(""), binding("href")]),
-    price: z.union([z.literal(""), binding("price")]),
-    sku: z.union([z.literal(""), binding("sku")]),
-    compatibility: z.union([z.literal(fitUnknown), binding("compatibility")]),
-  }),
-  agentNodeSchema.options[3].extend({
-    src: binding("image"),
-    name: binding("name"),
-  }),
+  z
+    .object({
+      id: z.literal("products"),
+      component: z.literal("ProductRail"),
+      controls: z.array(z.never()).length(0),
+      entries: z.array(leafId).max(12),
+      status: text,
+      paging: z.literal(""),
+      previousDisabled: z.literal(true),
+      nextDisabled: z.literal(true),
+      retryVisible: z.literal(false),
+      previous: action("previous"),
+      next: action("next"),
+      retry: action("retry"),
+    })
+    .strict(),
+  z
+    .object({
+      id: leafId,
+      component: z.literal("ProductEntry"),
+      name: binding("name"),
+      description: binding("description"),
+      price: binding("price"),
+      image: binding("image"),
+      href: binding("href"),
+    })
+    .strict(),
+  z
+    .object({
+      id: z.literal("focus"),
+      component: z.literal("ProductFocus"),
+      title: text,
+      description: text,
+      selectedTitle: z.union([z.literal(""), binding("name")]),
+      selectedDescription: z.union([z.literal(""), binding("description")]),
+      href: z.union([z.literal(""), binding("href")]),
+      active: z.boolean(),
+      ready: z.boolean(),
+      price: z.union([z.literal(""), binding("price")]),
+      sku: z.union([z.literal(""), binding("sku")]),
+      compatibility: z.union([z.literal(fitUnknown), binding("compatibility")]),
+      images: z.array(leafId).max(1),
+      retryVisible: z.literal(false),
+      retry: action("retry-product"),
+    })
+    .strict(),
+  z
+    .object({
+      id: leafId,
+      component: z.literal("DetailImage"),
+      src: binding("image"),
+      name: binding("name"),
+    })
+    .strict(),
 ]);
 const product = z
   .object({
@@ -57,7 +90,7 @@ const product = z
   .strict();
 
 /** Validate the entire public snapshot and graph before either reaches A2UI. */
-export const bindingBatchSchema = z
+export const batchSchema = z
   .object({
     ...correlation,
     catalogId: z.literal("https://luluspeedworks.com/catalog/scaffold/v1"),
@@ -106,12 +139,11 @@ export const bindingBatchSchema = z
     }
     const used = new Set<string>();
     const selections = new Map<string, string>();
-    const resolved = components.map((node) => {
+    for (const node of components) {
       const keys = new Set<string>();
       let count = 0;
-      const fields = Object.entries(node).map(([field, value]) => {
-        if (typeof value !== "object" || !("path" in value))
-          return [field, value];
+      for (const value of Object.values(node)) {
+        if (typeof value !== "object" || !("path" in value)) continue;
         const key = value.path.slice(
           prefix.length,
           value.path.lastIndexOf("/"),
@@ -120,8 +152,8 @@ export const bindingBatchSchema = z
         keys.add(key);
         used.add(key);
         selections.set(node.id, key);
-        return [field, paths.get(value.path)];
-      });
+        if (!paths.has(value.path)) valid = false;
+      }
       if (keys.size > 1) valid = false;
       if (node.component === "ProductFocus") {
         if (node.active !== node.ready || node.active !== (count === 6))
@@ -129,22 +161,36 @@ export const bindingBatchSchema = z
         if (!node.active && (count !== 0 || node.images.length !== 0))
           valid = false;
       }
-      return Object.fromEntries(fields);
-    });
+    }
     const focus = components.find((node) => node.component === "ProductFocus");
     if (focus)
       for (const image of focus.images)
         if (selections.get(image) !== selections.get(focus.id)) valid = false;
     if (used.size !== Object.keys(products).length) valid = false;
-    const literal = batchSchema.safeParse({
-      ...batch,
-      messages: [
-        {
-          version: wireVersion,
-          updateComponents: { surfaceId, components: resolved },
-        },
-      ],
-    });
+    const byId = new Map(components.map((value) => [value.id, value]));
+    const rail = byId.get("products");
+    const rootFocus = byId.get("focus");
+    const referenced = new Set(["products", "focus"]);
+    valid &&=
+      byId.size === components.length &&
+      rail?.component === "ProductRail" &&
+      rootFocus?.component === "ProductFocus";
+    for (const value of components) {
+      const refs =
+        value.component === "ProductRail"
+          ? value.entries
+          : value.component === "ProductFocus"
+            ? value.images
+            : [];
+      for (const id of refs) {
+        const expected =
+          value.component === "ProductRail" ? "ProductEntry" : "DetailImage";
+        if (referenced.has(id) || byId.get(id)?.component !== expected)
+          valid = false;
+        referenced.add(id);
+      }
+    }
+    if (referenced.size !== components.length) valid = false;
     const size = new TextEncoder().encode(
       JSON.stringify({
         catalogId: batch.catalogId,
@@ -152,11 +198,11 @@ export const bindingBatchSchema = z
         limitations: batch.limitations,
       }),
     ).byteLength;
-    if (!valid || !literal.success || size > 32768)
+    if (!valid || size > 32768)
       ctx.addIssue({
         code: "custom",
         message: "Invalid public catalog bindings",
       });
   });
 
-export type AgentBatch = LiteralAgentBatch | z.infer<typeof bindingBatchSchema>;
+export type AgentBatch = z.infer<typeof batchSchema>;

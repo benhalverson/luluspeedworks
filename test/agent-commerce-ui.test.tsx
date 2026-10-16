@@ -152,7 +152,7 @@ beforeEach(() => {
         },
         {
           type: "CUSTOM",
-          name: "lulu.progress.v1",
+          name: "lulu.progress",
           value: { runId, uiRevision, stage: "admission", invocation: 0 },
         },
         {
@@ -162,7 +162,7 @@ beforeEach(() => {
         },
         {
           type: "CUSTOM",
-          name: "lulu.a2ui.v1",
+          name: "lulu.a2ui",
           value: { ...agentFixture, runId, uiRevision },
         },
         {

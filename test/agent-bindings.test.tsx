@@ -3,7 +3,7 @@ import { StrictMode } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 import { createShoppingAgent } from "../src/storefront/agent";
-import { bindingBatchSchema } from "../src/storefront/agent-bindings";
+import { batchSchema } from "../src/storefront/agent-bindings";
 import { readAgentStream } from "../src/storefront/agent-stream";
 import {
   bindingFixture,
@@ -41,7 +41,6 @@ function stubShopping(
   reply: (input: {
     runId: string;
     uiRevision: number;
-    uiContract: string;
   }) => Response | Promise<Response>,
 ) {
   mockCatalog(2);
@@ -85,7 +84,7 @@ it.each(bindingProducts)(
   "renders bound $name through the real A2UI renderer",
   async (product) => {
     stubShopping((input) => {
-      expect(input.uiContract).toBe("lulu.a2ui.v2");
+      expect(input).not.toHaveProperty("uiContract");
       const correlation = { runId: input.runId, uiRevision: input.uiRevision };
       const batch = {
         ...bindingFixture([product.id], product.id),
@@ -235,11 +234,11 @@ const invalid: [string, (batch: Batch) => void][] = [
   ],
 ];
 it.each(invalid)(
-  "rejects %s before exposing either v2 message",
+  "rejects %s before exposing either message",
   (_name, mutate) => {
     const batch = bindingFixture([101, 102]);
     mutate(batch);
-    expect(bindingBatchSchema.safeParse(batch).success).toBe(false);
+    expect(batchSchema.safeParse(batch).success).toBe(false);
   },
 );
 
@@ -249,7 +248,7 @@ it("bounds total snapshot bytes and record count", () => {
     batch.messages[0].updateDataModel.value.products,
   ))
     item.description = "🦊".repeat(2048);
-  expect(bindingBatchSchema.safeParse(batch).success).toBe(false);
+  expect(batchSchema.safeParse(batch).success).toBe(false);
   const many = bindingFixture();
   for (let id = 102; id <= 114; id++)
     many.messages[0].updateDataModel.value.products[id] = {
@@ -257,19 +256,19 @@ it("bounds total snapshot bytes and record count", () => {
       id,
       href: `/products/${id}`,
     };
-  expect(bindingBatchSchema.safeParse(many).success).toBe(false);
+  expect(batchSchema.safeParse(many).success).toBe(false);
 });
 
 it("requires an inactive focus to have no bindings or images", () => {
   const batch = bindingFixture([101], null);
-  expect(bindingBatchSchema.safeParse(batch).success).toBe(true);
+  expect(batchSchema.safeParse(batch).success).toBe(true);
   Object.assign(component(batch, "focus"), { images: ["agent-item-101"] });
-  expect(bindingBatchSchema.safeParse(batch).success).toBe(false);
+  expect(batchSchema.safeParse(batch).success).toBe(false);
   Object.assign(component(batch, "focus"), {
     images: [],
     selectedTitle: { path: "/agentCatalog/products/101/name" },
   });
-  expect(bindingBatchSchema.safeParse(batch).success).toBe(false);
+  expect(batchSchema.safeParse(batch).success).toBe(false);
 });
 
 it("keeps the previous bound surface unchanged when a later batch changes data but has invalid bindings", async () => {
@@ -339,7 +338,7 @@ it("renders ambiguous and absent matches with unknown fit and no selected produc
   ).toBeVisible();
 });
 
-it("rejects a v2 batch with stale run correlation and trailing malformed output", async () => {
+it("rejects a batch with stale run correlation and trailing malformed output", async () => {
   const batch = bindingFixture();
   const expected = {
     runId: batch.runId,

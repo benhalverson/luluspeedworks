@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { bindingBatchSchema } from "../src/storefront/agent-bindings";
+import type { batchSchema } from "../src/storefront/agent-bindings";
 import { agentFixture } from "./agent-fixtures";
 
 export const unknownFit =
@@ -22,7 +22,7 @@ export const bindingProducts = [
   href: `/products/${101 + index}`,
   compatibility: unknownFit,
 }));
-type BoundBatch = z.input<typeof bindingBatchSchema>;
+type BoundBatch = z.input<typeof batchSchema>;
 export function bindingFixture(
   ids = [101],
   focus: number | null = 101,
@@ -131,10 +131,10 @@ export function bindingStream(
     },
     {
       type: "CUSTOM",
-      name: "lulu.progress.v1",
+      name: "lulu.progress",
       value: { ...input, stage: "admission", invocation: 0 },
     },
-    { type: "CUSTOM", name: "lulu.a2ui.v2", value: batch },
+    { type: "CUSTOM", name: "lulu.a2ui", value: batch },
     {
       type: "RUN_FINISHED",
       threadId: sessionId,

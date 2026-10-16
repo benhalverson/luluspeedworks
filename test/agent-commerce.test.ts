@@ -8,7 +8,6 @@ import {
 import { recoveryStorage } from "../src/storefront/agent-recovery";
 import { readAgentStream } from "../src/storefront/agent-stream";
 import { createCatalogController } from "../src/storefront/controller";
-import { bindingFixture } from "./agent-binding-fixtures";
 import { agentFixture } from "./agent-fixtures";
 import { testClient } from "./query-client";
 
@@ -28,7 +27,6 @@ let bodies: {
   runId: string;
   uiRevision: number;
   cart?: { id: string; revision: number };
-  uiContract?: string;
 }[];
 let runResponse:
   | ((body: (typeof bodies)[number]) => Response | Promise<Response>)
@@ -58,11 +56,7 @@ const orders: AgentEffect = {
 };
 const apply = vi.fn(async (_effects: AgentEffect[]) => {});
 const refresh = vi.fn(async () => {});
-function stream(
-  body: (typeof bodies)[number],
-  values = effects,
-  bindings = false,
-) {
+function stream(body: (typeof bodies)[number], values = effects) {
   const correlation = { runId: body.runId, uiRevision: body.uiRevision };
   const events = [
     {
@@ -73,7 +67,7 @@ function stream(
     },
     {
       type: "CUSTOM",
-      name: "lulu.progress.v1",
+      name: "lulu.progress",
       value: { ...correlation, stage: "admission", invocation: 0 },
     },
     ...values.map((result) => ({
@@ -83,14 +77,14 @@ function stream(
     })),
     {
       type: "CUSTOM",
-      name: "lulu.progress.v1",
+      name: "lulu.progress",
       value: { ...correlation, stage: "inference", invocation: 1 },
     },
     {
       type: "CUSTOM",
-      name: bindings ? "lulu.a2ui.v2" : "lulu.a2ui.v1",
+      name: "lulu.a2ui",
       value: {
-        ...(bindings ? bindingFixture() : agentFixture),
+        ...agentFixture,
         ...correlation,
       },
     },
@@ -257,22 +251,22 @@ it("retains original identity across lost stream, reload, running status and ter
   second.agent.dispose();
 });
 
-it("recovers a persisted v1 request unchanged before negotiating v2 for new work", async () => {
+it("recovers the exact persisted request before starting new work", async () => {
   const runId = crypto.randomUUID();
-  const legacy = {
+  const pendingRequest = {
     runId,
     uiRevision: 12,
-    message: "Earlier v1 request",
+    message: "Earlier request",
     context: [],
     cart: { id: cartId, revision: 4 },
   };
-  const body = JSON.stringify(legacy);
+  const body = JSON.stringify(pendingRequest);
   recoveryStorage(origin, "alice").write({
     runId,
     uiRevision: 12,
     session,
     body,
-    message: legacy.message,
+    message: pendingRequest.message,
     access,
   });
   runResponse = (request) =>
@@ -283,8 +277,8 @@ it("recovers a persisted v1 request unchanged before negotiating v2 for new work
       reason: null,
     });
   const { agent, browse } = create();
-  await agent.send("New request typed after upgrade");
-  expect(bodies[0]).toEqual(legacy);
+  await agent.send("New request typed during recovery");
+  expect(bodies[0]).toEqual(pendingRequest);
   const posts = vi
     .mocked(fetch)
     .mock.calls.filter(([url]) => String(url).endsWith("/runs"));
@@ -292,15 +286,15 @@ it("recovers a persisted v1 request unchanged before negotiating v2 for new work
   expect(browse).not.toHaveBeenCalled();
   expect(recoveryStorage(origin, "alice").read()).toBeUndefined();
   runResponse = undefined;
-  await agent.send("New request typed after upgrade");
-  expect(bodies[1]?.uiContract).toBe("lulu.a2ui.v2");
+  await agent.send("New request typed during recovery");
+  expect(bodies[1]).not.toHaveProperty("uiContract");
   expect(bodies[1]?.runId).not.toBe(runId);
   agent.dispose();
 });
 
 it("retains validated selection, cart and owned-order effects alongside bound guidance", async () => {
   effects = [selected, applied, orders];
-  runResponse = (body) => stream(body, effects, true);
+  runResponse = (body) => stream(body, effects);
   const { agent, browse } = create();
   await agent.send("Review my selected items and orders");
   expect(apply).toHaveBeenCalledWith(effects);
